@@ -21,15 +21,24 @@ items only you can do.
 
 ## B. What only YOU can do
 
-- ⬜ Create a **Partner Center** account and enroll in the **Microsoft 365 and
-  Copilot** (marketplace) program. https://partner.microsoft.com/
-- ⬜ Provide a **real support email** (replaces the placeholder in the hosted
-  pages — tell me the address and I'll patch it).
+- ⬜ **Create a Partner Center account + enroll in the Microsoft 365 and Copilot
+  program** (see section F1). Requires: a Microsoft **Entra ID work/school
+  account** (NOT a personal @outlook/@gmail account — e.g. an account on the
+  purposebuilt.systems tenant), **authority to sign on the company's behalf**,
+  and your **legal business name, address, and primary contact** (Microsoft
+  verifies these). Enrollment itself is free.
+- ✅ Real support email applied to the hosted pages: `Matthew@purposebuilt.systems`.
 - ⬜ Capture **1–5 screenshots** of the add-in in Outlook (e.g., the ribbon
   button, and the Reply All window with attachments). Recommended 1366×768.
   You produce these once you've sideloaded and tested it.
 - ⬜ Reserve the app name in Partner Center (must match the manifest DisplayName).
 - ⬜ Submit and respond to any reviewer feedback.
+
+> **Gating question:** PurposeBuiltSystems must be a real business entity you can
+> represent, with an Entra/Microsoft 365 work account. The
+> `Matthew@purposebuilt.systems` address suggests you already have that tenant —
+> use it. If PurposeBuiltSystems isn't a registered entity, account verification
+> is where you'll get stuck.
 
 ---
 
@@ -127,21 +136,48 @@ NOTES
 
 ## F. Step-by-step in Partner Center
 
-1. Go to https://partner.microsoft.com/ and create/sign in to a Partner Center
-   account. Complete the (free) **Microsoft 365 and Copilot** marketplace
-   enrollment. Account verification can take a few days.
-2. **Marketplace offers → New offer → Office add-in** (a.k.a. Microsoft 365 app).
-3. **Reserve your offer name:** `Reply All with Attachments` (matches the
-   manifest DisplayName).
-4. **Packages:** upload `manifest.xml`. Partner Center validates it on upload.
-5. **Marketplace listing:** paste the Name, Summary, Description, Search
-   keywords from section D; upload the 300×300 logo and your screenshots; paste
-   the Privacy / Terms / Support URLs from section C.
-6. **Notes for certification:** paste section E.
-7. **Availability/Plans:** set it free and choose markets (you can pick all).
-8. **Review and publish.** Microsoft runs automated + manual validation.
-   Respond to any feedback; resubmit if asked. When approved, it appears in
-   AppSource and you can install it from the store yourself.
+### F1. One-time account setup
+
+1. Sign in with your **Entra ID work account** (e.g. on the purposebuilt.systems
+   tenant) at the enrollment page:
+   https://partner.microsoft.com/dashboard/account/v3/enrollment/introduction/office
+2. Provide your **publisher profile**: company info, publisher info, contact info
+   (legal business name + address + primary contact — Microsoft verifies these).
+3. Accept the **Microsoft Office Agreement** (and Microsoft AI Cloud Partner
+   Program agreement if new). You must be authorized to sign for the company.
+4. Confirm the **Microsoft 365 and Copilot** program shows as registered under
+   Settings (gear) → Account settings → Programs.
+5. When you create your **publisher**, name it `PurposeBuiltSystems` so it matches
+   the manifest `<ProviderName>` (Microsoft requires them to match closely).
+
+### F2. Create and submit the offer
+
+1. Partner Center → **Marketplace offers** tile → **Microsoft 365 and Copilot**
+   tab → **+ New offer → Office Add-in**.
+2. **Name:** enter `Reply All with Attachments`, click **Check availability**,
+   associate it with the **PurposeBuiltSystems** publisher, **Create**.
+   (Publisher can't be changed later.)
+3. **Product setup:** answer No to the SSO/Entra question, No to additional
+   purchases, No to Apple Store, No to lead-management. Save draft.
+4. **Packages:** upload `manifest.xml`. Wait for **Status = Complete**.
+5. **Properties:** pick category **Productivity** (1–3 allowed). For
+   **Legal and support info**, the easiest path is to check **Standard Contract**
+   (use Microsoft's built-in EULA) — OR paste the Terms URL from section C.
+   Then paste the **Privacy policy** URL and **Support** URL from section C.
+   (Note: a Terms of Use does NOT count as the privacy policy — you need both,
+   and ours already names the app, which certification requires.)
+6. **Marketplace listings:** select language English; paste Name, Summary,
+   Description, Search keywords from section D; upload the 300×300 logo
+   (`assets/icon-300.png`) and your screenshots.
+7. **Availability:** schedule "as soon as approved" (the schedule can't be
+   changed after first publish); choose markets (all is fine); free.
+8. **Notes for certification:** paste section E. IMPORTANT: do NOT write
+   "contact me for details" — reviewers cannot contact you, and missing test
+   steps auto-fail. Our notes are fully self-contained (no login needed), so
+   you're covered.
+9. **Review and publish.** Expect a first response in ~3–4 business days; full
+   approval typically 2–4 weeks, sometimes with a feedback round. When approved
+   it appears in AppSource and you can install it from the store yourself.
 
 ## G. Reference
 
