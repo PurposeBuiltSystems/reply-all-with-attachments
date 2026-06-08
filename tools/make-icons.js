@@ -111,7 +111,9 @@ function makePng(size) {
 
 const outDir = path.join(__dirname, "..", "assets");
 fs.mkdirSync(outDir, { recursive: true });
-[16, 32, 80].forEach(function (size) {
+// 16/32/80 = ribbon buttons; 64 = AppSource IconUrl; 128 = AppSource
+// HighResolutionIconUrl; 300 = Partner Center listing logo.
+[16, 32, 64, 80, 128, 300].forEach(function (size) {
   const file = path.join(outDir, "icon-" + size + ".png");
   fs.writeFileSync(file, makePng(size));
   console.log("wrote " + file);
