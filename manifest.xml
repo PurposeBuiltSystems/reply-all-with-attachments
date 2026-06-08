@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Reply All with Attachments - Outlook add-in (add-in only / XML manifest).
+
+  Adds a one-click ribbon button on the message-read surface. When clicked it
+  reads the open message's attachments, fetches their bytes, and opens a
+  Reply All form with those attachments re-attached (Outlook normally drops
+  them on Reply All).
+
+  Files are hosted on GitHub Pages at
+  https://purposebuiltsystems.github.io/reply-all-with-attachments/ .
+  This manifest is the file you upload/sideload into Outlook; it only points
+  at the hosted program files (it is not itself hosted).
+-->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+  xsi:type="MailApp">
+
+  <Id>9852217c-11a0-44fc-99fe-79545b5d2f41</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Matthew Miller</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Reply All with Attachments" />
+  <Description DefaultValue="One-click Reply All that keeps the original attachments." />
+  <IconUrl DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-80.png" />
+  <SupportUrl DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/" />
+
+  <!-- Allow the add-in to talk to its own host. -->
+  <AppDomains>
+    <AppDomain>https://purposebuiltsystems.github.io</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Mailbox" />
+  </Hosts>
+
+  <Requirements>
+    <Sets>
+      <!-- 1.8 = getAttachmentContentAsync, 1.9 = displayReplyAllFormAsync (async). -->
+      <Set Name="Mailbox" MinVersion="1.9" />
+    </Sets>
+  </Requirements>
+
+  <!-- Required legacy form settings; the real UI is defined in VersionOverrides below. -->
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
+        <RequestedHeight>250</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+
+  <!-- Reading attachment content and opening a reply only needs read-item permission. -->
+  <Permissions>ReadItem</Permissions>
+
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
+  </Rule>
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.9">
+        <bt:Set Name="Mailbox" />
+      </bt:Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <!-- The page that loads our command code (FunctionName handlers). -->
+          <FunctionFile resid="Commands.Url" />
+
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="raAttachGroup">
+                <Label resid="GroupLabel" />
+                <Control xsi:type="Button" id="replyAllWithAttachmentsButton">
+                  <Label resid="ButtonLabel" />
+                  <Supertip>
+                    <Title resid="ButtonLabel" />
+                    <Description resid="ButtonTip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16" />
+                    <bt:Image size="32" resid="Icon.32" />
+                    <bt:Image size="80" resid="Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>replyAllWithAttachments</FunctionName>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-16.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-32.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Commands.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GroupLabel" DefaultValue="Reply All +" />
+        <bt:String id="ButtonLabel" DefaultValue="Reply All with Attachments" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="ButtonTip" DefaultValue="Reply to everyone and keep the original attachments, which Outlook normally removes on Reply All." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
