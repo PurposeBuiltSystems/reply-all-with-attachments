@@ -41,8 +41,9 @@
 
   <Requirements>
     <Sets>
-      <!-- 1.8 = getAttachmentContentAsync, 1.9 = displayReplyAllFormAsync (async). -->
-      <Set Name="Mailbox" MinVersion="1.9" />
+      <!-- 1.10 = event-based activation (OnNewMessageCompose), which we use to
+           attach files in the reply so it works on web/New Outlook. -->
+      <Set Name="Mailbox" MinVersion="1.10" />
     </Sets>
   </Requirements>
 
@@ -56,8 +57,9 @@
     </Form>
   </FormSettings>
 
-  <!-- Reading attachment content and opening a reply only needs read-item permission. -->
-  <Permissions>ReadItem</Permissions>
+  <!-- ReadWriteItem: required to add attachments to the reply in compose mode
+       (addFileAttachmentFromBase64Async). -->
+  <Permissions>ReadWriteItem</Permissions>
 
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
@@ -66,13 +68,20 @@
 
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Requirements>
-      <bt:Sets DefaultMinVersion="1.9">
+      <bt:Sets DefaultMinVersion="1.10">
         <bt:Set Name="Mailbox" />
       </bt:Sets>
     </Requirements>
 
     <Hosts>
       <Host xsi:type="MailHost">
+        <!-- Runtime that hosts the event handler (and the button command). The
+             Override points classic Windows' JS-only runtime at commands.js. -->
+        <Runtimes>
+          <Runtime resid="WebViewRuntime.Url">
+            <Override type="javascript" resid="JSRuntime.Url" />
+          </Runtime>
+        </Runtimes>
         <DesktopFormFactor>
           <!-- The page that loads our command code (FunctionName handlers). -->
           <FunctionFile resid="Commands.Url" />
@@ -99,6 +108,15 @@
               </Group>
             </OfficeTab>
           </ExtensionPoint>
+
+          <!-- Auto-fires when a reply/forward/new message opens. Our handler
+               re-attaches the files stashed by the button. -->
+          <ExtensionPoint xsi:type="LaunchEvent">
+            <LaunchEvents>
+              <LaunchEvent Type="OnNewMessageCompose" FunctionName="onMessageComposeHandler" />
+            </LaunchEvents>
+            <SourceLocation resid="WebViewRuntime.Url" />
+          </ExtensionPoint>
         </DesktopFormFactor>
       </Host>
     </Hosts>
@@ -111,6 +129,8 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
+        <bt:Url id="WebViewRuntime.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
+        <bt:Url id="JSRuntime.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.js" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Reply All +" />
