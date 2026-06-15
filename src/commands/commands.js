@@ -77,6 +77,8 @@ async function replyAllWithAttachments(event) {
 
     // Stash for the compose handler to pick up.
     await stash(files);
+    // DIAGNOSTIC: proves the button ran and stashed N files.
+    notify("info", "RAA: button stashed " + files.length + " file(s), opening reply…");
 
     // Open Reply All (no attachments param — the handler attaches them).
     item.displayReplyAllFormAsync("", function (res) {
@@ -102,11 +104,14 @@ function onMessageComposeHandler(event) {
   try {
     var rs = Office.context.roamingSettings;
     var raw = rs.get(META_KEY);
+    // DIAGNOSTIC: proves the event fired and whether the stash was found.
+    notify("info", "RAA: compose handler fired. Stash " + (raw ? "FOUND." : "EMPTY."));
     if (!raw) { return event.completed(); } // not our reply — do nothing
 
     var meta = JSON.parse(raw);
     var stale = !meta || !meta.files || !meta.files.length || (nowMs() - meta.ts) > FRESH_MS;
     if (stale) {
+      notify("info", "RAA: stash too old, skipping.");
       clearStash(rs);
       rs.saveAsync(function () { event.completed(); });
       return;
@@ -122,7 +127,9 @@ function onMessageComposeHandler(event) {
       return { name: f.name, b64: b64 };
     });
 
+    notify("info", "RAA: attaching " + files.length + " file(s)…");
     attachSequentially(item, files, 0, function () {
+      notify("info", "RAA: attached " + files.length + " file(s).");
       clearStash(rs);
       rs.saveAsync(function () { event.completed(); });
     });
