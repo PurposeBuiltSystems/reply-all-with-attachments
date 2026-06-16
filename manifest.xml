@@ -2,15 +2,14 @@
 <!--
   Reply All with Attachments - Outlook add-in (add-in only / XML manifest).
 
-  Adds a one-click ribbon button on the message-read surface. When clicked it
-  reads the open message's attachments, fetches their bytes, and opens a
-  Reply All form with those attachments re-attached (Outlook normally drops
-  them on Reply All).
+  One ribbon button on the message-read surface. It uses Microsoft Graph
+  (server-side) to create a Reply All draft and copy the original attachments
+  onto it, then opens the draft. This works on Outlook on the web, New Outlook,
+  and Classic. Sign-in uses nested app authentication (MSAL); the add-in only
+  ever touches the signed-in user's own mailbox (Graph Mail.ReadWrite, delegated).
 
-  Files are hosted on GitHub Pages at
-  https://purposebuiltsystems.github.io/reply-all-with-attachments/ .
-  This manifest is the file you upload/sideload into Outlook; it only points
-  at the hosted program files (it is not itself hosted).
+  Files are hosted on GitHub Pages. This manifest is the file you
+  upload/sideload/deploy into Outlook; it points at the hosted program files.
 -->
 <OfficeApp
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
@@ -20,7 +19,7 @@
   xsi:type="MailApp">
 
   <Id>9852217c-11a0-44fc-99fe-79545b5d2f41</Id>
-  <Version>1.1.0.0</Version>
+  <Version>2.0.0.0</Version>
   <ProviderName>PurposeBuiltSystems</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Reply All with Attachments" />
@@ -30,9 +29,10 @@
   <HighResolutionIconUrl DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-128.png" />
   <SupportUrl DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/support.html" />
 
-  <!-- Allow the add-in to talk to its own host. -->
+  <!-- Add-in host + the Microsoft sign-in domain used by MSAL/NAA. -->
   <AppDomains>
     <AppDomain>https://purposebuiltsystems.github.io</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -41,9 +41,8 @@
 
   <Requirements>
     <Sets>
-      <!-- 1.10 = event-based activation (OnNewMessageCompose), which we use to
-           attach files in the reply so it works on web/New Outlook. -->
-      <Set Name="Mailbox" MinVersion="1.10" />
+      <!-- 1.5 comfortably covers convertToRestId / displayMessageForm. -->
+      <Set Name="Mailbox" MinVersion="1.5" />
     </Sets>
   </Requirements>
 
@@ -57,9 +56,9 @@
     </Form>
   </FormSettings>
 
-  <!-- ReadWriteItem: required to add attachments to the reply in compose mode
-       (addFileAttachmentFromBase64Async). -->
-  <Permissions>ReadWriteItem</Permissions>
+  <!-- ReadItem: the add-in only reads the open message's id and opens the draft.
+       All mail read/write happens via Graph (delegated Mail.ReadWrite). -->
+  <Permissions>ReadItem</Permissions>
 
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
@@ -67,26 +66,16 @@
   <DisableEntityHighlighting>false</DisableEntityHighlighting>
 
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
-    <!-- Event-based activation (Runtimes + LaunchEvent) requires VersionOverrides v1.1,
-         which must be nested inside the v1.0 block. -->
-    <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
     <Requirements>
-      <bt:Sets DefaultMinVersion="1.10">
+      <bt:Sets DefaultMinVersion="1.5">
         <bt:Set Name="Mailbox" />
       </bt:Sets>
     </Requirements>
 
     <Hosts>
       <Host xsi:type="MailHost">
-        <!-- Runtime that hosts the event handler (and the button command). The
-             Override points classic Windows' JS-only runtime at commands.js. -->
-        <Runtimes>
-          <Runtime resid="WebViewRuntime.Url">
-            <Override type="javascript" resid="JSRuntime.Url" />
-          </Runtime>
-        </Runtimes>
         <DesktopFormFactor>
-          <!-- The page that loads our command code (FunctionName handlers). -->
+          <!-- The page that loads our command code (loads MSAL + commands.js). -->
           <FunctionFile resid="Commands.Url" />
 
           <ExtensionPoint xsi:type="MessageReadCommandSurface">
@@ -111,15 +100,6 @@
               </Group>
             </OfficeTab>
           </ExtensionPoint>
-
-          <!-- Auto-fires when a reply/forward/new message opens. Our handler
-               re-attaches the files stashed by the button. -->
-          <ExtensionPoint xsi:type="LaunchEvent">
-            <LaunchEvents>
-              <LaunchEvent Type="OnNewMessageCompose" FunctionName="onMessageComposeHandler" />
-            </LaunchEvents>
-            <SourceLocation resid="WebViewRuntime.Url" />
-          </ExtensionPoint>
         </DesktopFormFactor>
       </Host>
     </Hosts>
@@ -132,8 +112,6 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
-        <bt:Url id="WebViewRuntime.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
-        <bt:Url id="JSRuntime.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.js" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Reply All +" />
@@ -143,6 +121,5 @@
         <bt:String id="ButtonTip" DefaultValue="Reply to everyone and keep the original attachments, which Outlook normally removes on Reply All." />
       </bt:LongStrings>
     </Resources>
-    </VersionOverrides>
   </VersionOverrides>
 </OfficeApp>

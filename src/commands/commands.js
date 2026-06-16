@@ -16,7 +16,7 @@
 
 /* global Office, msal */
 
-var CLIENT_ID = "REPLACE_WITH_ENTRA_APP_CLIENT_ID"; // <-- from your Entra app registration
+var CLIENT_ID = "87764ff9-16e7-4e2f-8164-38eff9f3a895"; // Entra app registration (PurposeBuiltSystems)
 var GRAPH = "https://graph.microsoft.com/v1.0";
 var SCOPES = ["Mail.ReadWrite"];
 
