@@ -1,246 +1,130 @@
 /*
- * Reply All with Attachments — event-based implementation.
+ * Reply All with Attachments — Microsoft Graph implementation (v2).
  *
- * WHY event-based: Outlook's displayReplyAllForm "attachments" parameter is
- * broken on Outlook on the web and New Outlook (Microsoft bug office-js #4599) —
- * it silently drops the files. It only works on Classic Outlook. To work on the
- * modern clients, we instead attach the files INSIDE the reply using the compose
- * API addFileAttachmentFromBase64Async, which does work there.
+ * WHY Graph: Outlook's client-side reply APIs can't reliably re-attach files on
+ * Outlook on the web / New Outlook (office-js #4599). Doing it server-side via
+ * Microsoft Graph works on every platform: we create the reply-all DRAFT and
+ * copy the original attachments onto it through Graph, then open the draft.
  *
- * FLOW:
- *   1. Ribbon button (read mode): read the open message's non-inline attachments,
- *      fetch each one's bytes (base64), stash them in roamingSettings (chunked,
- *      since each setting is capped at 32 KB and the add-in total at ~2 MB), then
- *      open a normal Reply All form.
- *   2. OnNewMessageCompose handler (fires automatically when that reply opens):
- *      read the stash, re-attach each file via addFileAttachmentFromBase64Async,
- *      clear the stash, and call event.completed().
+ * AUTH: Nested App Authentication (NAA) via MSAL — no backend server. Requires
+ * an Entra app registration (see GRAPH-SETUP below) and the Mail.ReadWrite
+ * delegated permission. With admin consent granted, token acquisition is silent
+ * so the button stays one-click.
  *
- * The stash carries a timestamp; the handler only acts on a stash less than
- * 60 s old, so it never attaches to an unrelated new message/forward.
- *
- * Requirement set: Mailbox 1.10 (event-based activation). Permission:
- * read/write item (compose attach needs write).
+ * GRAPH-SETUP: paste your Entra app's Application (client) ID into CLIENT_ID.
  */
 
-/* global Office */
+/* global Office, msal */
 
-var META_KEY = "raa.meta";          // JSON: { ts, files: [{ name, chunks }] }
-var CHUNK_PREFIX = "raa.";          // raa.<fileIndex>.<chunkIndex> = base64 piece
-var FRESH_MS = 60000;               // only honor a stash younger than 60s
-var CHUNK_SIZE = 30000;             // chars per roamingSettings entry (<32 KB)
-var MAX_TOTAL = 1800000;            // ~1.8M base64 chars (~2 MB roaming cap)
+var CLIENT_ID = "REPLACE_WITH_ENTRA_APP_CLIENT_ID"; // <-- from your Entra app registration
+var GRAPH = "https://graph.microsoft.com/v1.0";
+var SCOPES = ["Mail.ReadWrite"];
 
-// Event-based (JS-only) runtimes do NOT run Office.onReady, so the handler
-// associations must be registered at top level.
+var pcaPromise = null;
+
 Office.onReady(function () {});
 if (Office.actions && Office.actions.associate) {
   Office.actions.associate("replyAllWithAttachments", replyAllWithAttachments);
-  Office.actions.associate("onMessageComposeHandler", onMessageComposeHandler);
 }
 
-/* ------------------------------------------------------------------ */
-/* Ribbon button (read mode)                                          */
-/* ------------------------------------------------------------------ */
+/** Lazily create the MSAL nestable client (NAA). */
+function getPca() {
+  if (!pcaPromise) {
+    pcaPromise = msal.createNestablePublicClientApplication({
+      auth: {
+        clientId: CLIENT_ID,
+        authority: "https://login.microsoftonline.com/common",
+      },
+    });
+  }
+  return pcaPromise;
+}
+
+/** Get a Graph token: silent first, interactive only if needed. */
+async function getToken() {
+  var pca = await getPca();
+  try {
+    var silent = await pca.acquireTokenSilent({ scopes: SCOPES });
+    return silent.accessToken;
+  } catch (e) {
+    var interactive = await pca.acquireTokenPopup({ scopes: SCOPES });
+    return interactive.accessToken;
+  }
+}
+
+/** Thin Graph fetch helper. */
+async function graph(token, method, path, body) {
+  var res = await fetch(GRAPH + path, {
+    method: method,
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    var text = await res.text();
+    throw new Error("Graph " + method + " " + path + " → " + res.status + " " + text);
+  }
+  return res.status === 204 ? null : res.json();
+}
 
 /** @param {Office.AddinCommands.Event} event */
 async function replyAllWithAttachments(event) {
   try {
     var item = Office.context.mailbox.item;
-    var atts = (item.attachments || []).filter(function (a) {
-      return !a.isInline; // inline images stay in the quoted reply automatically
-    });
-
-    if (atts.length === 0) {
-      item.displayReplyAllFormAsync("", function () { finish(event); });
-      return;
-    }
-
-    // Fetch every attachment's bytes.
-    var fetched = await Promise.all(
-      atts.map(function (a) {
-        return getContent(item, a.id).then(function (c) { return { att: a, content: c }; });
-      })
+    // Office gives an EWS id; Graph needs a REST id.
+    var restId = Office.context.mailbox.convertToRestId(
+      item.itemId,
+      Office.MailboxEnums.RestVersion.v2_0
     );
 
-    // Build base64 file list, respecting the roamingSettings size cap.
-    var files = [];
-    var total = 0;
+    var token = await getToken();
+
+    // 1. Create the Reply All draft (Graph omits original attachments, like Outlook).
+    var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
+
+    // 2. Fetch the original message's file attachments (skip inline images).
+    var attachments = await graph(token, "GET", "/me/messages/" + restId + "/attachments");
+    var files = (attachments.value || []).filter(function (a) {
+      return a["@odata.type"] === "#microsoft.graph.fileAttachment" && !a.isInline;
+    });
+
+    // 3. Copy each onto the draft. (Large attachments may need their own GET for
+    //    contentBytes; handled in a later pass if needed.)
     var skipped = 0;
-    fetched.forEach(function (f) {
-      var built = buildFile(f.att, f.content);
-      if (!built) { skipped++; return; }
-      if (total + built.b64.length > MAX_TOTAL) { skipped++; return; }
-      total += built.b64.length;
-      files.push(built);
-    });
-
-    // Stash for the compose handler to pick up.
-    await stash(files);
-    // DIAGNOSTIC: proves the button ran and stashed N files.
-    notify("info", "RAA: button stashed " + files.length + " file(s), opening reply…");
-
-    // Open Reply All (no attachments param — the handler attaches them).
-    item.displayReplyAllFormAsync("", function (res) {
-      if (res.status === Office.AsyncResultStatus.Failed) {
-        notify("error", "Couldn't open the reply: " + res.error.message);
-      } else if (skipped > 0) {
-        notify("info", skipped + " attachment(s) were too large to carry over and were skipped.");
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var bytes = f.contentBytes;
+      if (!bytes) {
+        // Collection didn't include the bytes — fetch the single attachment.
+        var full = await graph(token, "GET", "/me/messages/" + restId + "/attachments/" + f.id);
+        bytes = full && full.contentBytes;
       }
-      finish(event);
-    });
-  } catch (e) {
-    notify("error", "Reply All with Attachments failed: " + msg(e));
-    finish(event);
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* OnNewMessageCompose handler (compose mode, fires on the reply)     */
-/* ------------------------------------------------------------------ */
-
-/** @param {Office.AddinCommands.Event} event */
-function onMessageComposeHandler(event) {
-  try {
-    var rs = Office.context.roamingSettings;
-    var raw = rs.get(META_KEY);
-    // DIAGNOSTIC: proves the event fired and whether the stash was found.
-    notify("info", "RAA: compose handler fired. Stash " + (raw ? "FOUND." : "EMPTY."));
-    if (!raw) { return event.completed(); } // not our reply — do nothing
-
-    var meta = JSON.parse(raw);
-    var stale = !meta || !meta.files || !meta.files.length || (nowMs() - meta.ts) > FRESH_MS;
-    if (stale) {
-      notify("info", "RAA: stash too old, skipping.");
-      clearStash(rs);
-      rs.saveAsync(function () { event.completed(); });
-      return;
-    }
-
-    // Reconstruct each file's base64 from its chunks.
-    var item = Office.context.mailbox.item;
-    var files = meta.files.map(function (f, i) {
-      var b64 = "";
-      for (var j = 0; j < f.chunks; j++) {
-        b64 += rs.get(CHUNK_PREFIX + i + "." + j) || "";
-      }
-      return { name: f.name, b64: b64 };
-    });
-
-    notify("info", "RAA: attaching " + files.length + " file(s)…");
-    attachSequentially(item, files, 0, function () {
-      notify("info", "RAA: attached " + files.length + " file(s).");
-      clearStash(rs);
-      rs.saveAsync(function () { event.completed(); });
-    });
-  } catch (e) {
-    event.completed();
-  }
-}
-
-function attachSequentially(item, files, idx, done) {
-  if (idx >= files.length) { return done(); }
-  item.addFileAttachmentFromBase64Async(
-    files[idx].b64,
-    files[idx].name,
-    { isInline: false },
-    function () { attachSequentially(item, files, idx + 1, done); } // continue regardless of per-file result
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* roamingSettings stash helpers                                      */
-/* ------------------------------------------------------------------ */
-
-function stash(files) {
-  return new Promise(function (resolve, reject) {
-    var rs = Office.context.roamingSettings;
-    clearStash(rs); // drop any previous payload's chunk keys
-
-    var meta = { ts: nowMs(), files: [] };
-    files.forEach(function (f, i) {
-      var chunks = 0;
-      for (var pos = 0; pos < f.b64.length; pos += CHUNK_SIZE) {
-        rs.set(CHUNK_PREFIX + i + "." + chunks, f.b64.substr(pos, CHUNK_SIZE));
-        chunks++;
-      }
-      meta.files.push({ name: f.name, chunks: chunks });
-    });
-    rs.set(META_KEY, JSON.stringify(meta));
-
-    rs.saveAsync(function (res) {
-      if (res.status === Office.AsyncResultStatus.Succeeded) { resolve(); }
-      else { reject(res.error); }
-    });
-  });
-}
-
-/** Remove the previous payload's keys from the in-memory settings (caller saves). */
-function clearStash(rs) {
-  try {
-    var raw = rs.get(META_KEY);
-    if (raw) {
-      var meta = JSON.parse(raw);
-      (meta.files || []).forEach(function (f, i) {
-        for (var j = 0; j < f.chunks; j++) { rs.remove(CHUNK_PREFIX + i + "." + j); }
+      if (!bytes) { skipped++; continue; }
+      await graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: f.name,
+        contentType: f.contentType,
+        contentBytes: bytes,
       });
     }
-  } catch (e) { /* ignore */ }
-  rs.remove(META_KEY);
-}
 
-/* ------------------------------------------------------------------ */
-/* Attachment content -> { name, b64 }                                */
-/* ------------------------------------------------------------------ */
+    // 4. Open the populated draft for the user to review/send.
+    var ewsId = Office.context.mailbox.convertToEwsId(
+      draft.id,
+      Office.MailboxEnums.RestVersion.v2_0
+    );
+    Office.context.mailbox.displayMessageForm(ewsId);
 
-function buildFile(att, content) {
-  var F = Office.MailboxEnums.AttachmentContentFormat;
-  switch (content.format) {
-    case F.Base64:
-      return { name: att.name, b64: content.content };
-    case F.Eml:
-      return safeText(ensureExt(att.name, ".eml"), content.content);
-    case F.ICalendar:
-      return safeText(ensureExt(att.name, ".ics"), content.content);
-    case F.Url:
-    default:
-      return null; // cloud/url attachments aren't carried in this version
+    if (skipped > 0) {
+      notify("info", skipped + " attachment(s) could not be copied and were skipped.");
+    }
+    finish(event);
+  } catch (e) {
+    notify("error", "Reply All with Attachments failed: " + (e && e.message ? e.message : e));
+    finish(event);
   }
-}
-
-function safeText(name, text) {
-  try { return { name: name, b64: utf8ToBase64(text) }; }
-  catch (e) { return null; } // btoa may be unavailable in some runtimes
-}
-
-function ensureExt(name, ext) {
-  if (!name) { return "attachment" + ext; }
-  return name.toLowerCase().endsWith(ext) ? name : name + ext;
-}
-
-function utf8ToBase64(str) {
-  return btoa(unescape(encodeURIComponent(str)));
-}
-
-/* ------------------------------------------------------------------ */
-/* Small utilities                                                    */
-/* ------------------------------------------------------------------ */
-
-function getContent(item, attachmentId) {
-  return new Promise(function (resolve, reject) {
-    item.getAttachmentContentAsync(attachmentId, function (res) {
-      if (res.status === Office.AsyncResultStatus.Succeeded) { resolve(res.value); }
-      else { reject(res.error); }
-    });
-  });
-}
-
-function nowMs() {
-  return new Date().getTime();
-}
-
-function msg(e) {
-  return e && e.message ? e.message : String(e);
 }
 
 function notify(kind, text) {
@@ -256,7 +140,7 @@ function notify(kind, text) {
       icon: "Icon.16",
       persistent: false,
     });
-  } catch (e) { /* notifications unavailable in some contexts */ }
+  } catch (e) { /* ignore */ }
 }
 
 function finish(event) {
