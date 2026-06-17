@@ -31,11 +31,17 @@
      information about you, your email, your attachments, or your usage.</p>
 
   <h2>How your email content is handled</h2>
-  <p>All processing happens locally, inside Outlook, on your own device. When you
-     click the button, the add-in reads the open message's attachments through
-     Microsoft's official Office JavaScript APIs and hands them to the new reply —
-     entirely within Outlook. <strong>Your email and attachments are never sent to
-     us or to any outside server.</strong></p>
+  <p>When you click the button, the add-in signs you in (Microsoft nested app
+     authentication) and uses <strong>Microsoft Graph</strong> — Microsoft's own
+     Microsoft 365 service — to create the Reply All draft and copy the original
+     attachments onto it. Your message and attachments travel only between your
+     mailbox and Microsoft Graph; <strong>they stay entirely within the Microsoft
+     365 boundary.</strong></p>
+  <p><strong>There is no PurposeBuilt Systems server in this process, and no
+     third party receives your data.</strong> The add-in connects directly to
+     Microsoft Graph from your own client; we never see, receive, store, or proxy
+     your email or attachments. The add-in accesses only the signed-in user's own
+     mailbox (delegated permission) — never anyone else's.</p>
 
   <h2>Hosting</h2>
   <p>The add-in's program files (a small amount of HTML, JavaScript, and icon
@@ -49,9 +55,12 @@
   <p>The add-in sets no cookies and uses no analytics or advertising technologies.</p>
 
   <h2>Permissions</h2>
-  <p>The add-in requests the minimum Outlook permission level (<code>read item</code>).
-     This permission is used solely to read the attachments on the message you have
-     open so they can be re-attached to your reply.</p>
+  <p>The add-in uses the Outlook <code>read item</code> permission (to read the open
+     message and open the reply) and the Microsoft Graph <code>Mail.ReadWrite</code>
+     <em>delegated</em> permission (to create the reply and copy the attachments).
+     "Delegated" means the add-in acts only as the signed-in user and can reach only
+     that user's own mailbox — never other people's mail. No application-level or
+     mailbox-wide access is requested.</p>
 
   <h2>Changes</h2>
   <p>If this policy changes, the updated version will be posted at this URL with a
