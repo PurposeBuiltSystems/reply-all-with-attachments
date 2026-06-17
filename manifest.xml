@@ -19,7 +19,7 @@
   xsi:type="MailApp">
 
   <Id>9852217c-11a0-44fc-99fe-79545b5d2f41</Id>
-  <Version>2.1.0.0</Version>
+  <Version>2.2.0.0</Version>
   <ProviderName>PurposeBuiltSystems</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Reply All with Attachments" />
