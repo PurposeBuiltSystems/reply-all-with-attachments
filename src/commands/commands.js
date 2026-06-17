@@ -84,6 +84,16 @@ async function replyAllWithAttachments(event) {
     // 1. Create the Reply All draft (Graph omits original attachments, like Outlook).
     var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
 
+    // 1b. If the user saved a signature, insert it above the quoted thread.
+    var sig = readSignature(Office.context.roamingSettings);
+    if (sig) {
+      var d = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
+      var body = (d && d.body && d.body.content) || "";
+      await graph(token, "PATCH", "/me/messages/" + draft.id, {
+        body: { contentType: "HTML", content: sig + "<br><br>" + body },
+      });
+    }
+
     // 2. Fetch the original message's file attachments (skip inline images).
     var attachments = await graph(token, "GET", "/me/messages/" + restId + "/attachments");
     var files = (attachments.value || []).filter(function (a) {
@@ -125,6 +135,17 @@ async function replyAllWithAttachments(event) {
     notify("error", "Reply All with Attachments failed: " + (e && e.message ? e.message : e));
     finish(event);
   }
+}
+
+// Read the signature saved by the settings pane (chunked in roamingSettings).
+function readSignature(rs) {
+  try {
+    var n = rs.get("raa.sig.meta");
+    if (!n) { return ""; }
+    var out = "";
+    for (var i = 0; i < n; i++) { out += rs.get("raa.sig." + i) || ""; }
+    return out;
+  } catch (e) { return ""; }
 }
 
 function notify(kind, text) {

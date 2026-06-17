@@ -19,7 +19,7 @@
   xsi:type="MailApp">
 
   <Id>9852217c-11a0-44fc-99fe-79545b5d2f41</Id>
-  <Version>2.0.0.0</Version>
+  <Version>2.1.0.0</Version>
   <ProviderName>PurposeBuiltSystems</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Reply All with Attachments" />
@@ -97,6 +97,21 @@
                     <FunctionName>replyAllWithAttachments</FunctionName>
                   </Action>
                 </Control>
+                <Control xsi:type="Button" id="signatureSettingsButton">
+                  <Label resid="SigButtonLabel" />
+                  <Supertip>
+                    <Title resid="SigButtonLabel" />
+                    <Description resid="SigButtonTip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16" />
+                    <bt:Image size="32" resid="Icon.32" />
+                    <bt:Image size="80" resid="Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
               </Group>
             </OfficeTab>
           </ExtensionPoint>
@@ -112,13 +127,16 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/taskpane/taskpane.html" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Reply All +" />
         <bt:String id="ButtonLabel" DefaultValue="Reply All with Attachments" />
+        <bt:String id="SigButtonLabel" DefaultValue="Signature" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="ButtonTip" DefaultValue="Reply to everyone and keep the original attachments, which Outlook normally removes on Reply All." />
+        <bt:String id="SigButtonTip" DefaultValue="Set the signature added to the top of your Reply All with Attachments replies." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

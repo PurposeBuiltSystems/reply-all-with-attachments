@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reply All with Attachments — Signature</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 16px; color: #242424; }
+    h1 { font-size: 1.1rem; color: #0f6cbd; margin: 0 0 8px; }
+    ol { padding-left: 1.1rem; margin: 8px 0 12px; }
+    li { margin: 4px 0; }
+    #sig {
+      border: 1px solid #8a8886; border-radius: 4px; min-height: 140px; padding: 10px;
+      overflow: auto; background: #fff;
+    }
+    #sig:empty:before { content: "Paste your signature here…"; color: #a19f9d; }
+    .row { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+    button {
+      background: #0f6cbd; color: #fff; border: none; border-radius: 4px;
+      padding: 8px 16px; font-size: 0.95rem; cursor: pointer;
+    }
+    button.secondary { background: #f3f2f1; color: #242424; }
+    #status { font-size: 0.9rem; }
+    .muted { color: #616161; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Your reply signature</h1>
+  <p class="muted">This signature is added to the top of every <strong>Reply All with Attachments</strong> reply.</p>
+  <ol>
+    <li>Open an email that shows your normal signature (or Outlook Settings → Mail).</li>
+    <li>Select your whole signature and <strong>copy</strong> it (⌘C / Ctrl+C).</li>
+    <li>Click the box below and <strong>paste</strong> (⌘V / Ctrl+V) — logo and formatting come too.</li>
+    <li>Click <strong>Save</strong>.</li>
+  </ol>
+
+  <div id="sig" contenteditable="true"></div>
+
+  <div class="row">
+    <button id="save">Save</button>
+    <button id="clear" class="secondary">Clear</button>
+    <span id="status"></span>
+  </div>
+
+  <script src="taskpane.js"></script>
+</body>
+</html>
