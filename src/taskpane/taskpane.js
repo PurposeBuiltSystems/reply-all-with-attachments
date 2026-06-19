@@ -66,6 +66,7 @@ Office.onReady(function () {
 });
 
 function save() {
+  compressExistingImages(); // shrink any oversized logo already in the box
   var html = sigEl.innerHTML.trim();
   var rs = Office.context.roamingSettings;
   var unembedded = countUnembeddedImages();
@@ -170,6 +171,23 @@ function compressLoadedImg(im) {
     }
   }
   return smallest; // best effort if nothing hit the budget
+}
+
+// Recompress any embedded (data:) image already sitting in the box that's over
+// budget — covers logos placed before this code loaded. Synchronous: data:
+// images are same-origin and already decoded, so the canvas won't taint.
+function compressExistingImages() {
+  var imgs = sigEl.querySelectorAll("img");
+  for (var i = 0; i < imgs.length; i++) {
+    var img = imgs[i];
+    if (img.src.indexOf("data:") !== 0) { continue; }
+    if (img.src.length <= IMG_BUDGET) { continue; }
+    if (!img.complete || !img.naturalWidth) { continue; }
+    try {
+      var u = compressLoadedImg(img);
+      if (u) { img.src = u; }
+    } catch (e) { /* leave as-is; save will report if still too big */ }
+  }
 }
 
 function countUnembeddedImages() {
