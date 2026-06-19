@@ -12,12 +12,17 @@ items only you can do.
 ## A. What's already done (by us)
 
 - ✅ Working, validated add-in (`manifest.xml` passes Microsoft's validator).
-- ✅ Minimal permission (`read item`) — easiest path through review.
+- ✅ Builds the reply via **Microsoft Graph** (`createReplyAll` + copy
+  attachments) using **delegated `Mail.ReadWrite`** (signed-in user's own mailbox
+  only) with **nested app authentication (MSAL)** — no publisher server.
 - ✅ Hosted on HTTPS (GitHub Pages).
 - ✅ AppSource-compliant icons: **64×64** (`IconUrl`) and **128×128**
   (`HighResolutionIconUrl`) in the manifest.
-- ✅ Hosted **Privacy Policy**, **Terms of Use**, and **Support** pages.
+- ✅ Hosted **Privacy Policy**, **Terms of Use**, and **Support** pages — privacy
+  policy describes the Graph data flow and the no-data-collected design.
 - ✅ Listing logo (300×300) generated in `assets/icon-300.png`.
+- ✅ Multitenant Entra app registered (client ID
+  `87764ff9-16e7-4e2f-8164-38eff9f3a895`).
 
 ## B. What only YOU can do
 
@@ -78,17 +83,23 @@ KEY BENEFITS
 • One click. No forwarding, no re-typing recipients, no manually re-attaching files.
 • Keeps the conversation intact. It's a true Reply All, so the thread and all
   recipients are preserved.
-• Smart about inline images. Pictures embedded in the message body stay in the
-  quoted reply automatically and aren't duplicated.
-• Handles large threads. Files, cloud attachments, and attached messages are
-  carried over; anything too large for Outlook's reply limit is skipped with a
-  clear notice.
+• Works everywhere. Because the reply is built with Microsoft Graph, it works on
+  Outlook on the web, new and classic Outlook on Windows, and Outlook on Mac.
+• Optional signature. Set a reply signature once (text and logo) and it's placed
+  at the top of your replies. It's saved only in your own Outlook roaming
+  settings — never sent to us.
 
-PRIVACY BY DESIGN
-The add-in has no servers, no accounts, and no tracking. It collects no data.
-Reading attachments and building the reply happen entirely inside Outlook, on
-your own device — your email and attachments are never sent anywhere. It
-requests only the minimum "read item" permission.
+PRIVACY BY DESIGN — WE COLLECT NO DATA
+This add-in collects no data. None. There are no accounts to create, no
+analytics, no trackers, no advertising, and no PurposeBuilt Systems server in the
+loop. When you click the button, the reply is built directly between your own
+mailbox and Microsoft Graph — Microsoft 365's own service — so your email and
+attachments never leave the Microsoft 365 boundary and are never seen, stored,
+proxied, sold, or shared by us. The add-in uses only the delegated
+Mail.ReadWrite permission, which restricts it to your own mailbox and never
+touches anyone else's mail. The optional signature is stored only in your own
+mailbox's roaming settings. In short: it's a button that does exactly what it
+says and keeps nothing.
 
 WHO IT'S FOR
 Anyone who regularly replies to threads where the attachment needs to stay with
@@ -97,8 +108,9 @@ records workflows, and anyone who misses the old "reply with attachments" macro.
 
 HOW TO USE
 1. Open a received email that has attachments.
-2. Click Reply All with Attachments on the ribbon.
-3. The Reply All window opens with the attachments attached. Send as usual.
+2. Click Reply All with Attachments on the ribbon. The first time, sign in with
+   your mailbox account when prompted (one-time consent; later clicks are silent).
+3. A Reply All draft opens with the original attachments attached. Send as usual.
 ```
 
 **Search keywords** (a few, comma-separated)
@@ -114,22 +126,40 @@ reply all, attachments, reply with attachments, forward, email, attach, producti
 
 ```
 TEST STEPS
-1. Open Outlook (web, new Windows, classic Windows, or Mac) with any mailbox.
-2. Open a RECEIVED email message that has one or more file attachments.
-   (Any test message with, e.g., a PDF or image attachment works.)
-3. On the message ribbon, click the "Reply All with Attachments" button
-   (group "Reply All +").
-4. EXPECTED: a Reply All compose window opens addressed to the sender and all
-   recipients, with the original attachments already attached.
+1. Install/sideload the add-in for any Microsoft 365 mailbox (Outlook on the web,
+   new or classic Outlook on Windows, or Outlook on Mac).
+2. Open a RECEIVED email that has one or more file attachments (e.g. a PDF).
+3. On the message ribbon, click "Reply All with Attachments" (group "Reply All +").
+4. FIRST RUN ONLY: a standard Microsoft sign-in appears. Sign in with the current
+   mailbox's account and consent to the "Mail.ReadWrite" (delegated) permission.
+   This is handled entirely by Microsoft Entra; a regular user can grant this
+   consent for their own mailbox. Subsequent clicks are silent (no prompt).
+5. EXPECTED: a Reply All draft opens, addressed to the sender and all recipients,
+   with the original attachments already attached and the quoted thread intact.
+   Edit and send as normal.
 
-NOTES
-- No sign-in, account, license key, or external service is required.
-- The add-in collects/transmits no data; all work happens locally via the
-  Office.js APIs getAttachmentContentAsync and displayReplyAllFormAsync.
-- Permission requested: read item (minimum).
-- Inline images in the original body are intentionally not re-attached (they
-  remain in the quoted reply). Attachments too large for Outlook's reply-form
-  limit are skipped and the user is notified.
+OPTIONAL FEATURE — SIGNATURE (not required to test the core feature)
+- A second ribbon button, "Signature", opens a task pane where the user can paste
+  a reply signature (text and logo). It is stored ONLY in the user's own Outlook
+  roaming settings (Microsoft 365) and is added to the top of replies. It is
+  never transmitted to or stored by the publisher.
+
+ARCHITECTURE / DATA HANDLING — THE ADD-IN COLLECTS NO DATA
+- No publisher/ISV server is involved at any point. The static program files
+  (HTML/JS/icons) are served from GitHub Pages; the reply itself is built by
+  calling Microsoft Graph (createReplyAll, then copying the original attachments
+  onto the draft) DIRECTLY from the user's own client.
+- Authentication uses Microsoft nested app authentication (MSAL/NAA). There is no
+  separate account, no license key, and no third-party service.
+- Permission used: Microsoft Graph "Mail.ReadWrite", DELEGATED only. The add-in
+  acts solely as the signed-in user and can access only that user's own mailbox.
+  No application-level, mailbox-wide, or other-users' access is requested.
+- The add-in collects, logs, stores, transmits, sells, and shares NO user data.
+  Email and attachments travel only between the user's mailbox and Microsoft
+  Graph, inside the Microsoft 365 service boundary; nothing is retained by the
+  publisher.
+- Multitenant Microsoft Entra app (client) ID:
+  87764ff9-16e7-4e2f-8164-38eff9f3a895
 ```
 
 ---
@@ -157,8 +187,13 @@ NOTES
 2. **Name:** enter `Reply All with Attachments`, click **Check availability**,
    associate it with the **PurposeBuiltSystems** publisher, **Create**.
    (Publisher can't be changed later.)
-3. **Product setup:** answer No to the SSO/Entra question, No to additional
-   purchases, No to Apple Store, No to lead-management. Save draft.
+3. **Product setup:**
+   - **Single sign-on (SSO):** answer **No**. (This question is about Office
+     manifest SSO via `WebApplicationInfo`/`getAccessToken`, which we do NOT use.
+     We authenticate with MSAL nested app auth instead — different mechanism. The
+     sign-in/consent is covered in the certification notes so reviewers expect it.)
+   - No to additional purchases, No to Apple Store, No to lead-management.
+   - Save draft.
 4. **Packages:** upload `manifest.xml`. Wait for **Status = Complete**.
 5. **Properties:** pick category **Productivity** (1–3 allowed). For
    **Legal and support info**, the easiest path is to check **Standard Contract**
