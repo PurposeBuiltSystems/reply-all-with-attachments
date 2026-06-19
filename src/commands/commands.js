@@ -85,12 +85,26 @@ async function replyAllWithAttachments(event) {
     var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
 
     // 1b. If the user saved a signature, insert it above the quoted thread.
+    //     Embedded logo images (data: URIs) are added as inline cid attachments
+    //     so they render reliably — some clients strip raw data: URIs in mail.
     var sig = readSignature(Office.context.roamingSettings);
     if (sig) {
+      var ex = extractInlineImages(sig);
+      for (var k = 0; k < ex.images.length; k++) {
+        var im = ex.images[k];
+        await graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: im.name,
+          contentType: im.contentType,
+          contentBytes: im.contentBytes,
+          isInline: true,
+          contentId: im.cid,
+        });
+      }
       var d = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
       var body = (d && d.body && d.body.content) || "";
       await graph(token, "PATCH", "/me/messages/" + draft.id, {
-        body: { contentType: "HTML", content: sig + "<br><br>" + body },
+        body: { contentType: "HTML", content: ex.html + "<br><br>" + body },
       });
     }
 
@@ -135,6 +149,31 @@ async function replyAllWithAttachments(event) {
     notify("error", "Reply All with Attachments failed: " + (e && e.message ? e.message : e));
     finish(event);
   }
+}
+
+// Pull base64 data-URI images out of the signature HTML and rewrite them to
+// reference inline attachments by cid. Returns the rewritten HTML plus the list
+// of images to POST as inline attachments on the draft.
+function extractInlineImages(html) {
+  var images = [];
+  var n = 0;
+  function take(ctype, b64) {
+    n++;
+    var cid = "raasig" + n;
+    var ext = (/\/(\w+)/.exec(ctype) || [])[1] || "png";
+    images.push({ cid: cid, contentType: ctype, contentBytes: b64, name: "image" + n + "." + ext });
+    return cid;
+  }
+  // Handles src="data:..." and src='data:...'
+  var out = html.replace(
+    /src\s*=\s*"data:([^;]+);base64,([^"]+)"/gi,
+    function (m, ctype, b64) { return 'src="cid:' + take(ctype, b64) + '"'; }
+  );
+  out = out.replace(
+    /src\s*=\s*'data:([^;]+);base64,([^']+)'/gi,
+    function (m, ctype, b64) { return "src='cid:" + take(ctype, b64) + "'"; }
+  );
+  return { html: out, images: images };
 }
 
 // Read the signature saved by the settings pane (chunked in roamingSettings).

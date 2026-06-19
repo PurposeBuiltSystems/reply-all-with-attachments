@@ -15,7 +15,8 @@
       overflow: auto; background: #fff;
     }
     #sig:empty:before { content: "Paste your signature here…"; color: #a19f9d; }
-    .row { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+    #sig img { max-width: 100%; }
+    .row { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     button {
       background: #0f6cbd; color: #fff; border: none; border-radius: 4px;
       padding: 8px 16px; font-size: 0.95rem; cursor: pointer;
@@ -31,7 +32,8 @@
   <ol>
     <li>Open an email that shows your normal signature (or Outlook Settings → Mail).</li>
     <li>Select your whole signature and <strong>copy</strong> it (⌘C / Ctrl+C).</li>
-    <li>Click the box below and <strong>paste</strong> (⌘V / Ctrl+V) — logo and formatting come too.</li>
+    <li>Click the box below and <strong>paste</strong> (⌘V / Ctrl+V).</li>
+    <li>If your <strong>logo doesn't appear</strong> after pasting, click <strong>Add image…</strong> and pick the logo file.</li>
     <li>Click <strong>Save</strong>.</li>
   </ol>
 
@@ -39,9 +41,11 @@
 
   <div class="row">
     <button id="save">Save</button>
+    <button id="addimg" class="secondary">Add image…</button>
     <button id="clear" class="secondary">Clear</button>
-    <span id="status"></span>
+    <input type="file" id="imgfile" accept="image/*" style="display:none" />
   </div>
+  <div class="row"><span id="status"></span></div>
 
   <script src="taskpane.js"></script>
 </body>
