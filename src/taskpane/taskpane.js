@@ -28,6 +28,10 @@ var CHUNK_SIZE = 30000;
 // the signature text, the chunk keys, and anything else Office stores.
 var IMG_BUDGET = 22000;
 
+// Logos render at their full pixel size and flow inline unless constrained, so
+// cap the display width and force block layout (text stacks below, not beside).
+var MAX_DISPLAY_W = 150;
+
 var sigEl, statusEl;
 
 Office.onReady(function () {
@@ -67,6 +71,7 @@ Office.onReady(function () {
 
 function save() {
   compressExistingImages(); // shrink any oversized logo already in the box
+  normalizeImages();        // cap display width + stack text below the logo
   var html = sigEl.innerHTML.trim();
   var rs = Office.context.roamingSettings;
   var unembedded = countUnembeddedImages();
@@ -187,6 +192,22 @@ function compressExistingImages() {
       var u = compressLoadedImg(img);
       if (u) { img.src = u; }
     } catch (e) { /* leave as-is; save will report if still too big */ }
+  }
+}
+
+// Constrain every logo to a sensible signature width and make it a block so the
+// signature text stacks below it instead of wrapping beside it. Fixes logos
+// that were embedded at full pixel size / inline.
+function normalizeImages() {
+  var imgs = sigEl.querySelectorAll("img");
+  for (var i = 0; i < imgs.length; i++) {
+    var img = imgs[i];
+    img.removeAttribute("height");
+    img.setAttribute("width", String(MAX_DISPLAY_W));
+    img.style.display = "block";
+    img.style.width = MAX_DISPLAY_W + "px";
+    img.style.height = "auto";
+    img.style.maxWidth = "100%";
   }
 }
 
