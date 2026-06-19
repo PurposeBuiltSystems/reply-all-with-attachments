@@ -84,14 +84,25 @@ async function replyAllWithAttachments(event) {
     // 1. Create the Reply All draft (Graph omits original attachments, like Outlook).
     var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
 
-    // 1b. If the user saved a signature, insert it above the quoted thread.
-    //     Embedded logo images (data: URIs) are added as inline cid attachments
-    //     so they render reliably — some clients strip raw data: URIs in mail.
+    // 1b. Tidy the quoted-thread header (Graph mashes the divider + From/Sent/
+    //     To/Subject onto one line for plain-text originals) and, if the user
+    //     saved a signature, insert it above the quoted thread — embedding its
+    //     logo as an inline cid attachment so it renders reliably (some clients
+    //     strip raw data: URIs in mail).
     var sig = readSignature(Office.context.roamingSettings);
+    var d = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
+    var body = (d && d.body && d.body.content) || "";
+    var tidied = tidyQuotedHeader(body);
+    var content = tidied;
+    var images = [];
     if (sig) {
       var ex = extractInlineImages(sig);
-      for (var k = 0; k < ex.images.length; k++) {
-        var im = ex.images[k];
+      images = ex.images;
+      content = ex.html + "<br><br>" + tidied;
+    }
+    if (sig || tidied !== body) {
+      for (var k = 0; k < images.length; k++) {
+        var im = images[k];
         await graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
           "@odata.type": "#microsoft.graph.fileAttachment",
           name: im.name,
@@ -101,10 +112,8 @@ async function replyAllWithAttachments(event) {
           contentId: im.cid,
         });
       }
-      var d = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
-      var body = (d && d.body && d.body.content) || "";
       await graph(token, "PATCH", "/me/messages/" + draft.id, {
-        body: { contentType: "HTML", content: ex.html + "<br><br>" + body },
+        body: { contentType: "HTML", content: content },
       });
     }
 
@@ -149,6 +158,17 @@ async function replyAllWithAttachments(event) {
     notify("error", "Reply All with Attachments failed: " + (e && e.message ? e.message : e));
     finish(event);
   }
+}
+
+// Graph's createReplyAll collapses the quoted-thread header onto a single line
+// for plain-text originals (e.g. "____ From: … Sent: … To: … Subject: …").
+// Drop the divider onto its own line and put each English field label on its
+// own line. Best-effort and English-only — leaves other layouts/locales as-is.
+// Only run on the quoted body, never on the user's signature.
+function tidyQuotedHeader(html) {
+  return html
+    .replace(/(_{5,})/g, "$1<br>")
+    .replace(/ (From|Sent|To|Cc|Bcc|Subject):/g, "<br>$1:");
 }
 
 // Pull base64 data-URI images out of the signature HTML and rewrite them to
