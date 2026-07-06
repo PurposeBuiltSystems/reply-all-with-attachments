@@ -118,16 +118,36 @@ async function replyAllWithAttachments(event) {
     }
 
     // 2. Fetch the original message's file attachments (skip inline images).
+    //    isInline alone is unreliable — many clients embed signature logos
+    //    without setting it — so also treat any attachment whose contentId is
+    //    referenced as cid: in the quoted body as inline.
     var attachments = await graph(token, "GET", "/me/messages/" + restId + "/attachments");
     var files = (attachments.value || []).filter(function (a) {
-      return a["@odata.type"] === "#microsoft.graph.fileAttachment" && !a.isInline;
+      if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") { return false; }
+      if (a.isInline) { return false; }
+      if (a.contentId && content.indexOf("cid:" + a.contentId) !== -1) { return false; }
+      return true;
     });
+
+    // 2b. createReplyAll already carries the inline images the quoted thread
+    //     needs, and some senders attach the same file twice — skip anything
+    //     already on the draft (or already copied) so nothing lands twice.
+    var existing = await graph(
+      token,
+      "GET",
+      "/me/messages/" + draft.id + "/attachments?$select=name,size"
+    );
+    var seen = {};
+    (existing.value || []).forEach(function (a) { seen[a.name + "|" + a.size] = true; });
 
     // 3. Copy each onto the draft. (Large attachments may need their own GET for
     //    contentBytes; handled in a later pass if needed.)
     var skipped = 0;
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
+      var key = f.name + "|" + f.size;
+      if (seen[key]) { continue; }
+      seen[key] = true;
       var bytes = f.contentBytes;
       if (!bytes) {
         // Collection didn't include the bytes — fetch the single attachment.
