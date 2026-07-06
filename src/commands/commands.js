@@ -143,12 +143,19 @@ async function replyAllWithAttachments(event) {
       });
     }
 
-    // 4. Open the populated draft for the user to review/send.
-    var ewsId = Office.context.mailbox.convertToEwsId(
-      draft.id,
-      Office.MailboxEnums.RestVersion.v2_0
-    );
-    Office.context.mailbox.displayMessageForm(ewsId);
+    // 4. Open the populated draft for the user to review/send. Opening a
+    //    message form isn't available on every client (Outlook mobile) —
+    //    the draft already exists either way, so point at Drafts instead of
+    //    reporting a failure.
+    try {
+      var ewsId = Office.context.mailbox.convertToEwsId(
+        draft.id,
+        Office.MailboxEnums.RestVersion.v2_0
+      );
+      Office.context.mailbox.displayMessageForm(ewsId);
+    } catch (openErr) {
+      notify("info", "Reply All draft created with attachments - open your Drafts folder to review and send.");
+    }
 
     if (skipped > 0) {
       notify("info", skipped + " attachment(s) could not be copied and were skipped.");

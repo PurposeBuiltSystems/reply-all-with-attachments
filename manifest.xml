@@ -19,7 +19,7 @@
   xsi:type="MailApp">
 
   <Id>9852217c-11a0-44fc-99fe-79545b5d2f41</Id>
-  <Version>2.3.0.0</Version>
+  <Version>2.4.0.0</Version>
   <ProviderName>PurposeBuiltSystems</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Reply All with Attachments" />
@@ -139,5 +139,117 @@
         <bt:String id="SigButtonTip" DefaultValue="Set the signature added to the top of your Reply All with Attachments replies." />
       </bt:LongStrings>
     </Resources>
+
+    <!-- Outlook mobile (iOS/Android): the main Reply All button only. The
+         Signature pane stays desktop/web; a signature saved there roams to
+         mobile automatically via the mailbox's roaming settings. -->
+    <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
+      <Requirements>
+        <bt:Sets DefaultMinVersion="1.5">
+          <bt:Set Name="Mailbox" />
+        </bt:Sets>
+      </Requirements>
+
+      <Hosts>
+        <Host xsi:type="MailHost">
+          <DesktopFormFactor>
+            <FunctionFile resid="Commands.Url" />
+
+            <ExtensionPoint xsi:type="MessageReadCommandSurface">
+              <OfficeTab id="TabDefault">
+                <Group id="raAttachGroup">
+                  <Label resid="GroupLabel" />
+                  <Control xsi:type="Button" id="replyAllWithAttachmentsButton">
+                    <Label resid="ButtonLabel" />
+                    <Supertip>
+                      <Title resid="ButtonLabel" />
+                      <Description resid="ButtonTip" />
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16" />
+                      <bt:Image size="32" resid="Icon.32" />
+                      <bt:Image size="80" resid="Icon.80" />
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>replyAllWithAttachments</FunctionName>
+                    </Action>
+                  </Control>
+                  <Control xsi:type="Button" id="signatureSettingsButton">
+                    <Label resid="SigButtonLabel" />
+                    <Supertip>
+                      <Title resid="SigButtonLabel" />
+                      <Description resid="SigButtonTip" />
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16" />
+                      <bt:Image size="32" resid="Icon.32" />
+                      <bt:Image size="80" resid="Icon.80" />
+                    </Icon>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="Taskpane.Url" />
+                    </Action>
+                  </Control>
+                </Group>
+              </OfficeTab>
+            </ExtensionPoint>
+          </DesktopFormFactor>
+
+          <MobileFormFactor>
+            <FunctionFile resid="Commands.Url" />
+
+            <ExtensionPoint xsi:type="MobileMessageReadCommandSurface">
+              <Group id="mobileRaAttachGroup">
+                <Label resid="GroupLabel" />
+                <Control xsi:type="MobileButton" id="mobileReplyAllWithAttachmentsButton">
+                  <Label resid="ButtonLabel" />
+                  <Icon xsi:type="bt:MobileIconList">
+                    <bt:Image size="25" scale="1" resid="Icon.25" />
+                    <bt:Image size="25" scale="2" resid="Icon.50" />
+                    <bt:Image size="25" scale="3" resid="Icon.75" />
+                    <bt:Image size="32" scale="1" resid="Icon.32" />
+                    <bt:Image size="32" scale="2" resid="Icon.64" />
+                    <bt:Image size="32" scale="3" resid="Icon.96" />
+                    <bt:Image size="48" scale="1" resid="Icon.48" />
+                    <bt:Image size="48" scale="2" resid="Icon.96" />
+                    <bt:Image size="48" scale="3" resid="Icon.144" />
+                  </Icon>
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>replyAllWithAttachments</FunctionName>
+                  </Action>
+                </Control>
+              </Group>
+            </ExtensionPoint>
+          </MobileFormFactor>
+        </Host>
+      </Hosts>
+
+      <Resources>
+        <bt:Images>
+          <bt:Image id="Icon.16" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-16.png" />
+          <bt:Image id="Icon.25" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-25.png" />
+          <bt:Image id="Icon.32" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-32.png" />
+          <bt:Image id="Icon.48" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-48.png" />
+          <bt:Image id="Icon.50" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-50.png" />
+          <bt:Image id="Icon.64" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-64.png" />
+          <bt:Image id="Icon.75" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-75.png" />
+          <bt:Image id="Icon.80" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-80.png" />
+          <bt:Image id="Icon.96" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-96.png" />
+          <bt:Image id="Icon.144" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/assets/icon-144.png" />
+        </bt:Images>
+        <bt:Urls>
+          <bt:Url id="Commands.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" />
+          <bt:Url id="Taskpane.Url" DefaultValue="https://purposebuiltsystems.github.io/reply-all-with-attachments/src/taskpane/taskpane.html" />
+        </bt:Urls>
+        <bt:ShortStrings>
+          <bt:String id="GroupLabel" DefaultValue="Reply All +" />
+          <bt:String id="ButtonLabel" DefaultValue="Reply All with Attachments" />
+          <bt:String id="SigButtonLabel" DefaultValue="Signature" />
+        </bt:ShortStrings>
+        <bt:LongStrings>
+          <bt:String id="ButtonTip" DefaultValue="Reply to everyone and keep the original attachments, which Outlook normally removes on Reply All." />
+          <bt:String id="SigButtonTip" DefaultValue="Set the signature added to the top of your Reply All with Attachments replies." />
+        </bt:LongStrings>
+      </Resources>
+    </VersionOverrides>
   </VersionOverrides>
 </OfficeApp>
