@@ -10,13 +10,16 @@
     "sideload": "office-addin-debugging start manifest.xml desktop",
     "sideload:web": "office-addin-debugging start manifest.xml web",
     "stop": "office-addin-debugging stop manifest.xml",
-    "validate": "office-addin-manifest validate manifest.xml"
+    "validate": "office-addin-manifest validate manifest.xml",
+    "check": "node tools/check-undeclared.js",
+    "test": "node tools/check-undeclared.js"
   },
   "author": "Matthew Miller",
   "license": "MIT",
   "devDependencies": {
     "office-addin-debugging": "^6.0.4",
     "office-addin-dev-certs": "^2.0.4",
-    "office-addin-manifest": "^2.0.4"
+    "office-addin-manifest": "^2.0.4",
+    "acorn": "^8.16.0"
   }
 }
