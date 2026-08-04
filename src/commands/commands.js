@@ -40,14 +40,34 @@ function getPca() {
   return pcaPromise;
 }
 
+/**
+ * Sign-in must never hang. An un-timed await on the popup flow leaves the
+ * ribbon button doing nothing visible, with no way for the user to tell
+ * whether it is working or stuck.
+ */
+function withTimeout(promise, ms, message) {
+  var timer;
+  return Promise.race([
+    promise.then(function (v) { clearTimeout(timer); return v; },
+                 function (e) { clearTimeout(timer); throw e; }),
+    new Promise(function (_, reject) {
+      timer = setTimeout(function () { reject(new Error(message)); }, ms);
+    }),
+  ]);
+}
+
 /** Get a Graph token: silent first, interactive only if needed. */
 async function getToken() {
-  var pca = await getPca();
+  var pca = await withTimeout(getPca(), 20000,
+    "Sign-in didn't start. Fully quit Outlook (Cmd+Q) and reopen, then try again.");
   try {
-    var silent = await pca.acquireTokenSilent({ scopes: SCOPES });
-    return silent.accessToken;
+    return (await withTimeout(pca.acquireTokenSilent({ scopes: SCOPES }), 20000, "silent timeout")).accessToken;
   } catch (e) {
-    var interactive = await pca.acquireTokenPopup({ scopes: SCOPES });
+    var interactive = await withTimeout(
+      pca.acquireTokenPopup({ scopes: SCOPES }), 120000,
+      "Sign-in didn't finish \u2014 a Microsoft sign-in window may have opened behind Outlook. " +
+      "Check for it, finish signing in, and click again. If none appeared, fully quit Outlook " +
+      "(Cmd+Q), reopen, and retry.");
     return interactive.accessToken;
   }
 }
