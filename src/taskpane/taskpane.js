@@ -28,9 +28,10 @@ var CHUNK_SIZE = 30000;
 // the signature text, the chunk keys, and anything else Office stores.
 var IMG_BUDGET = 22000;
 
-// Logos render at their full pixel size and flow inline unless constrained, so
-// cap the display width and force block layout (text stacks below, not beside).
-var MAX_DISPLAY_W = 150;
+// Only genuinely oversized logos get reined in, and only when the signature
+// itself didn't specify a size. Forcing a width and display:block on every
+// image moved logos onto their own line, splitting the user's text.
+var MAX_LOGO_W = 320;
 
 var sigEl, statusEl;
 
@@ -128,7 +129,9 @@ function embedImages(clipFiles) {
         return;
       }
       var direct = null;
-      try { direct = compressLoadedImg(img); } catch (e) { direct = null; } // tainted
+      try {
+        direct = compressLoadedImg(img, img.src.indexOf("data:") === 0 ? img.src : null);
+      } catch (e) { direct = null; } // tainted
       if (direct) { img.src = direct; return; }
       if (clipIdx < clipUrls.length) {
         embedFromDataUrl(clipUrls[clipIdx++], function (small) { img.src = small; });
@@ -142,27 +145,52 @@ function embedFromDataUrl(dataUrl, cb) {
   var im = new Image();
   im.onload = function () {
     var out;
-    try { out = compressLoadedImg(im); } catch (e) { out = dataUrl; }
+    try { out = compressLoadedImg(im, dataUrl); } catch (e) { out = dataUrl; }
     cb(out || dataUrl);
   };
   im.onerror = function () { cb(dataUrl); };
   im.src = dataUrl;
 }
 
-// Downscale + JPEG-compress a loaded image until the data URL fits IMG_BUDGET.
-// White background so transparent logos stay readable on white email bodies.
-// Throws if the source image tainted the canvas (caller falls back).
-function compressLoadedImg(im) {
+/**
+ * Fit an image into IMG_BUDGET while degrading it as little as possible.
+ *
+ * Order matters: an image that already fits is kept BYTE-FOR-BYTE — no
+ * canvas, no re-encode, no resize — so a modest PNG keeps its transparency
+ * and its original dimensions. Only when it genuinely doesn't fit do we
+ * shrink, still trying PNG (transparency intact) at each size before
+ * falling back to JPEG on white, which is the lossy last resort.
+ *
+ * Throws if the source image tainted the canvas (caller falls back).
+ */
+function compressLoadedImg(im, originalDataUrl) {
+  // 1. already small enough? keep exactly what the user gave us
+  if (originalDataUrl && originalDataUrl.length <= IMG_BUDGET) { return originalDataUrl; }
+
   var w0 = im.naturalWidth || im.width;
   var h0 = im.naturalHeight || im.height;
   if (!w0 || !h0) { return null; }
-  var dims = [240, 200, 160, 128, 96, 72];
-  var qualities = [0.8, 0.7, 0.6, 0.5, 0.4];
+
+  // 2. try progressively smaller, PNG first so transparency survives
+  var longest = Math.max(w0, h0);
+  var dims = [longest, 640, 480, 360, 320, 240, 200, 160, 128, 96, 72]
+    .filter(function (d, i) { return i === 0 || d < longest; });
+  var qualities = [0.92, 0.85, 0.75, 0.6, 0.45];
   var smallest = null;
+
   for (var d = 0; d < dims.length; d++) {
-    var scale = Math.min(1, dims[d] / Math.max(w0, h0));
+    var scale = Math.min(1, dims[d] / longest);
     var w = Math.max(1, Math.round(w0 * scale));
     var h = Math.max(1, Math.round(h0 * scale));
+
+    var pc = document.createElement("canvas");
+    pc.width = w; pc.height = h;
+    pc.getContext("2d").drawImage(im, 0, 0, w, h); // no white fill: keep alpha
+    var png = pc.toDataURL("image/png");           // throws if tainted
+    if (png.length <= IMG_BUDGET) { return png; }
+    smallest = png;
+
+    // 3. PNG too big at this size — JPEG on white, the lossy fallback
     var c = document.createElement("canvas");
     c.width = w; c.height = h;
     var ctx = c.getContext("2d");
@@ -170,7 +198,7 @@ function compressLoadedImg(im) {
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(im, 0, 0, w, h);
     for (var q = 0; q < qualities.length; q++) {
-      var url = c.toDataURL("image/jpeg", qualities[q]); // throws if tainted
+      var url = c.toDataURL("image/jpeg", qualities[q]);
       if (url.length <= IMG_BUDGET) { return url; }
       smallest = url;
     }
@@ -189,25 +217,31 @@ function compressExistingImages() {
     if (img.src.length <= IMG_BUDGET) { continue; }
     if (!img.complete || !img.naturalWidth) { continue; }
     try {
-      var u = compressLoadedImg(img);
+      var u = compressLoadedImg(img, null); // over budget by definition here
       if (u) { img.src = u; }
     } catch (e) { /* leave as-is; save will report if still too big */ }
   }
 }
 
-// Constrain every logo to a sensible signature width and make it a block so the
-// signature text stacks below it instead of wrapping beside it. Fixes logos
-// that were embedded at full pixel size / inline.
+/**
+ * Keep a logo from overflowing the message, WITHOUT relaying it out. The
+ * signature is the user's; where the logo sits relative to their text is
+ * their decision. So: never set display, and only impose a width when the
+ * signature gave none and the image is genuinely oversized.
+ */
 function normalizeImages() {
   var imgs = sigEl.querySelectorAll("img");
   for (var i = 0; i < imgs.length; i++) {
     var img = imgs[i];
-    img.removeAttribute("height");
-    img.setAttribute("width", String(MAX_DISPLAY_W));
-    img.style.display = "block";
-    img.style.width = MAX_DISPLAY_W + "px";
-    img.style.height = "auto";
-    img.style.maxWidth = "100%";
+    img.style.maxWidth = "100%";               // never wider than the message
+    var sized = img.getAttribute("width") || (img.style && img.style.width);
+    if (sized) { continue; }                   // the signature already said how big
+    var natural = img.naturalWidth || 0;
+    if (natural > MAX_LOGO_W) {
+      img.setAttribute("width", String(MAX_LOGO_W));
+      img.style.height = "auto";
+      img.removeAttribute("height");
+    }
   }
 }
 
