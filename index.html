@@ -3,19 +3,65 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reply All with Attachments</title>
+  <title>Reply All with Attachments — keep the files Outlook drops</title>
+  <meta name="description" content="Outlook add-in that replies to everyone and keeps the original attachments, which Reply All normally removes. No data collection." />
   <style>
-    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 3rem auto; max-width: 40rem; color: #242424; }
-    code { background: #f3f2f1; padding: 0.1rem 0.3rem; border-radius: 3px; }
-    .ok { color: #0f6cbd; }
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 3rem auto; max-width: 44rem; padding: 0 1rem; color: #242424; line-height: 1.55; }
+    h1 { color: #0f6cbd; margin-bottom: 0.2rem; }
+    h2 { margin-top: 2rem; }
+    .tagline { color: #616161; font-size: 1.1rem; margin-top: 0; }
+    .badge { display: inline-block; background: #eff6fc; color: #0c5aa0; border-radius: 6px; padding: 0.2rem 0.6rem; font-size: 0.85rem; margin: 0.15rem 0.25rem 0.15rem 0; }
+    img.icon { width: 96px; height: 96px; float: right; margin: 0 0 1rem 1rem; }
+    footer { margin-top: 3rem; color: #616161; font-size: 0.9rem; }
   </style>
 </head>
 <body>
-  <h1 class="ok">Reply All with Attachments</h1>
-  <p>This is the local dev host for the Outlook add-in. If you can read this over
-     <strong>https://localhost:3000</strong>, the certificate is trusted and the
-     add-in's files are being served correctly.</p>
-  <p>Sideload the add-in, open a message in Outlook, and click
-     <strong>Reply All with Attachments</strong> in the ribbon.</p>
+  <img class="icon" src="assets/icon-128.png" alt="Reply All with Attachments icon" />
+  <h1>Reply All with Attachments</h1>
+  <p class="tagline">Reply to everyone <em>and</em> keep the original attachments — the ones
+     Outlook silently throws away.</p>
+
+  <p>
+    <span class="badge">One extra ribbon button</span>
+    <span class="badge">Custom reply signature</span>
+    <span class="badge">No data collection</span>
+    <span class="badge">Free</span>
+  </p>
+
+  <h2>Why</h2>
+  <p>Outlook strips attachments when you Reply All. That's sensible when the attachment is a
+     40 MB deck nobody needs bounced around a thread — and wrong whenever the attachment
+     <em>is</em> the conversation. A contract everyone is marking up. A drawing under review. A
+     form being passed along. Then you're forwarding instead, re-adding six recipients by hand,
+     and hoping you didn't miss one.</p>
+
+  <h2>What it does</h2>
+  <ul>
+    <li><strong>Replies to everyone, attachments intact</strong> — one button in the
+        <strong>Reply All +</strong> ribbon group.</li>
+    <li><strong>Leaves it as a draft</strong> — you read it and press Send. Nothing is ever sent
+        for you.</li>
+    <li><strong>Adds your signature</strong> — set it once, including an image; these replies are
+        built by the add-in, so Outlook's own signature doesn't apply to them.</li>
+    <li><strong>Doesn't duplicate inline images</strong> — pictures embedded in the message body
+        stay in the quoted reply and aren't attached a second time.</li>
+  </ul>
+
+  <h2>Privacy by design</h2>
+  <p>No servers, no accounts, no analytics. It runs in your own Outlook session against
+     Microsoft Graph — inside the Microsoft 365 boundary. We never see your email.
+     Read the <a href="privacy-policy.html">privacy policy</a>.</p>
+
+  <h2>Get it</h2>
+  <p>Available on <strong>Microsoft AppSource</strong>. In Outlook, open
+     <strong>Get Add-ins</strong> and search for <em>Reply All with Attachments</em>.
+     Questions: <a href="mailto:Matthew@purposebuilt.systems">Matthew@purposebuilt.systems</a>.</p>
+  <p>New to it? Start with the <a href="tutorials.html">tutorial</a>.</p>
+
+  <footer>
+    <a href="tutorials.html">Tutorial</a> · <a href="support.html">Support</a> ·
+    <a href="privacy-policy.html">Privacy</a> · <a href="terms.html">Terms</a> ·
+    PurposeBuilt Systems LLC
+  </footer>
 </body>
 </html>

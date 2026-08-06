@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tutorial — Reply All with Attachments</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 3rem auto; max-width: 44rem; padding: 0 1rem; color: #242424; line-height: 1.6; }
+    h1 { color: #0f6cbd; } h2 { color: #0f6cbd; margin-top: 2.4rem; }
+    .step { background: #f8f8f8; border-radius: 8px; padding: 10px 14px; margin: 8px 0; }
+    .step b { color: #0f6cbd; }
+    .note { background: #fff8e6; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+    .lede { background: #eff6fc; border-radius: 8px; padding: 12px 16px; }
+    .see { border-left: 3px solid #0f6cbd; background: #f4f9fd; padding: 8px 14px; margin: 8px 0 14px; font-size: .95em; }
+    .see b { color: #0f6cbd; }
+    .wrong { border-left: 3px solid #c4314b; background: #fdf3f4; padding: 8px 14px; margin: 8px 0 14px; font-size: .95em; }
+    .wrong b { color: #c4314b; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .92em; }
+    th, td { border: 1px solid #d1d1d1; padding: 6px 10px; text-align: left; vertical-align: top; }
+    th { background: #eef4f6; }
+    footer { margin-top: 3rem; color: #616161; font-size: .9em; }
+    @media print { body { margin: 0.5in; } }
+  </style>
+</head>
+<body>
+  <h1>Reply All with Attachments — Tutorial</h1>
+  <p class="lede">Outlook silently drops attachments when you Reply All. This add-in adds a
+     reply button that keeps them. That's the whole product — but there are a couple of things
+     worth knowing so it behaves the way you expect.</p>
+
+  <h2>The problem, precisely</h2>
+  <p>Reply All in Outlook removes attachments from the original message. That's usually right —
+     it stops a 40 MB deck bouncing round a thread twenty times. It's wrong whenever the
+     attachment <em>is</em> the conversation: a contract everyone is marking up, a drawing under
+     review, a form being passed along. Then you're stuck forwarding, re-adding recipients by
+     hand, and hoping you got them all.</p>
+
+  <h2>Tutorial — your first reply</h2>
+  <p><b>Worked example:</b> a six-person thread about a signed maintenance agreement, with the
+     PDF attached to the message you're reading.</p>
+
+  <div class="step"><b>1.</b> Open the message in Outlook.</div>
+  <div class="step"><b>2.</b> On the ribbon, find the <b>Reply All +</b> group and click
+     <b>Reply All with Attachments</b>.</div>
+  <div class="see"><b>You should see:</b> a reply draft addressed to everyone the original went
+     to, with <b>the original attachments still attached</b>, and your signature at the top.</div>
+  <div class="step"><b>3.</b> Type your reply and press <b>Send</b> yourself.</div>
+
+  <div class="note"><b>Nothing sends automatically.</b> The add-in builds the draft; you always
+     read it and press Send. That includes checking the recipient list — it's a Reply All, so it
+     goes to everyone the original did, which is exactly what you asked for and occasionally not
+     what you want.</div>
+
+  <h2>Set your signature once</h2>
+  <p>These replies are created by the add-in rather than by Outlook, so Outlook's own signature
+     doesn't apply to them. Set one here instead.</p>
+  <div class="step"><b>1.</b> Click <b>Signature</b> in the same <b>Reply All +</b> ribbon group.</div>
+  <div class="step"><b>2.</b> Type your signature under <b>Your reply signature</b>. Use
+     <b>Add image…</b> for a logo or a scanned signature, then <b>Save</b>. <b>Clear</b> removes
+     it entirely.</div>
+  <div class="see"><b>You should see</b> your signature at the top of the next reply you create
+     with this button.</div>
+
+  <h3>About images</h3>
+  <p>Your signature is stored in your mailbox settings, which Microsoft caps at <b>32 KB total</b>.
+     That is a small budget for a picture.</p>
+  <ul>
+    <li>An image that already fits is stored <b>byte for byte</b> — untouched, exactly the file
+        you chose.</li>
+    <li>One that doesn't fit is compressed to make it fit. PNG is tried first so logos and
+        line-art keep their sharp edges and transparency; JPEG is the fallback for photographs.</li>
+  </ul>
+  <div class="wrong"><b>If your logo looks wrong or lands in an odd spot:</b> it was almost
+     certainly too large and got compressed. Export it smaller — around 150 px tall is plenty
+     for a signature — and add it again. A pre-sized PNG will come through exactly as you made it.</div>
+
+  <h2>What this add-in does not do</h2>
+  <table>
+    <tr><th>It doesn't</th><th>Because</th></tr>
+    <tr><td>Change Outlook's normal Reply All</td>
+        <td>It adds its own button. The built-in one still strips attachments, by design — this
+            gives you the choice rather than taking one away.</td></tr>
+    <tr><td>Send anything on its own</td>
+        <td>Every reply is a draft you review and send.</td></tr>
+    <tr><td>Upload your mail anywhere</td>
+        <td>There is no publisher server. It runs inside Outlook and talks only to Microsoft 365.</td></tr>
+  </table>
+
+  <footer>
+    <a href="index.html">Overview</a> ·
+    <a href="support.html">Support</a> ·
+    <a href="privacy-policy.html">Privacy</a><br />
+    PurposeBuilt Systems · Reply All with Attachments
+  </footer>
+</body>
+</html>
