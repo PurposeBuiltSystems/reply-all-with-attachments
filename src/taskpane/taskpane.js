@@ -35,42 +35,60 @@ var MAX_LOGO_W = 320;
 
 var sigEl, statusEl;
 
-Office.onReady(function () {
-  sigEl = document.getElementById("sig");
-  statusEl = document.getElementById("status");
-  sigEl.innerHTML = readSignature(Office.context.roamingSettings) || "";
+/**
+ * Outlook desktop caches this pane's HTML while ?v= still fetches today's
+ * JavaScript, so startup can run new code against an old page. An unguarded
+ * dereference here throws inside Office.onReady and Outlook reports it as
+ * "Add-in Error" - the whole pane, not one control. A sibling add-in failed
+ * certification (1120.3.7.8) on exactly this.
+ */
+function el(id) { return document.getElementById(id); }
+function onClick(id, fn) { var e = el(id); if (e) { e.onclick = fn; } }
 
-  document.getElementById("save").onclick = save;
-  document.getElementById("clear").onclick = function () {
+Office.onReady(function () {
+  sigEl = el("sig");
+  statusEl = el("status");
+  if (sigEl) { sigEl.innerHTML = readSignature(Office.context.roamingSettings) || ""; }
+
+  onClick("save", save);
+  onClick("clear", function () {
+    if (!sigEl) { return; }
     sigEl.innerHTML = "";
     sigEl.focus();
-  };
+  });
 
   // Embed a logo file directly (guaranteed to persist).
-  document.getElementById("addimg").onclick = function () {
-    document.getElementById("imgfile").click();
-  };
-  document.getElementById("imgfile").onchange = function (e) {
-    var f = e.target.files && e.target.files[0];
-    if (f) {
-      readFileAsDataUrl(f, function (url) {
-        embedFromDataUrl(url, function (small) {
-          insertHtml('<img src="' + small + '" />');
-          status("Logo added. Click Save to keep it.");
+  onClick("addimg", function () {
+    var f = el("imgfile");
+    if (f) { f.click(); }
+  });
+  var imgfile = el("imgfile");
+  if (imgfile) {
+    imgfile.onchange = function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) {
+        readFileAsDataUrl(f, function (url) {
+          embedFromDataUrl(url, function (small) {
+            insertHtml('<img src="' + small + '" />');
+            status("Logo added. Click Save to keep it.");
+          });
         });
-      });
-    }
-    e.target.value = "";
-  };
+      }
+      e.target.value = "";
+    };
+  }
 
   // After a paste, turn temporary image references into compressed embedded bytes.
-  sigEl.addEventListener("paste", function (e) {
-    var clipFiles = imageFilesFromClipboard(e.clipboardData);
-    setTimeout(function () { embedImages(clipFiles); }, 0);
-  });
+  if (sigEl) {
+    sigEl.addEventListener("paste", function (e) {
+      var clipFiles = imageFilesFromClipboard(e.clipboardData);
+      setTimeout(function () { embedImages(clipFiles); }, 0);
+    });
+  }
 });
 
 function save() {
+  if (!sigEl) { return; }   // stale cached page: nothing to save from
   compressExistingImages(); // shrink any oversized logo already in the box
   normalizeImages();        // cap display width + stack text below the logo
   var html = sigEl.innerHTML.trim();
