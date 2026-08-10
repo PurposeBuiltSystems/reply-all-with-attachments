@@ -73,6 +73,8 @@ async function getToken() {
 }
 
 /** Thin Graph fetch helper. */
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
 async function graph(token, method, path, body) {
   var res = await fetch(GRAPH + path, {
     method: method,
@@ -163,6 +165,7 @@ async function replyAllWithAttachments(event) {
     // 3. Copy each onto the draft. (Large attachments may need their own GET for
     //    contentBytes; handled in a later pass if needed.)
     var skipped = 0;
+    var copied = {};
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       var key = f.name + "|" + f.size;
@@ -181,6 +184,34 @@ async function replyAllWithAttachments(event) {
         contentType: f.contentType,
         contentBytes: bytes,
       });
+      copied[key] = true;
+    }
+
+    // 3b. Confirm the server actually has them before opening anything.
+    //
+    //     Reported symptom: the first attempt sometimes opens a reply with no
+    //     attachments, and repeating it works. Every call above is awaited and
+    //     graph() throws on any non-2xx, so a silent copy failure isn't
+    //     possible - which points at the draft being opened before Outlook has
+    //     caught up with the copies. Opening early is the one thing here we
+    //     control, so don't: re-read the draft until the server reports what we
+    //     expect, and only then open it.
+    var expected = 0;
+    for (var q = 0; q < files.length; q++) {
+      if (copied[files[q].name + "|" + files[q].size]) { expected++; }
+    }
+    var present = 0;
+    if (expected > 0) {
+      for (var attempt = 0; attempt < 5; attempt++) {
+        var check = await graph(
+          token, "GET", "/me/messages/" + draft.id + "/attachments?$select=name,size,isInline"
+        );
+        present = (check.value || []).filter(function (a) {
+          return !a.isInline && copied[a.name + "|" + a.size];
+        }).length;
+        if (present >= expected) { break; }
+        await delay(400 * (attempt + 1));   // 0.4s, 0.8s, 1.2s, 1.6s
+      }
     }
 
     // 4. Open the populated draft for the user to review/send. Opening a
@@ -199,6 +230,11 @@ async function replyAllWithAttachments(event) {
 
     if (skipped > 0) {
       notify("info", skipped + " attachment(s) could not be copied and were skipped.");
+    } else if (expected > 0 && present < expected) {
+      // The copies were accepted but the server still isn't reporting them.
+      // Say so plainly rather than let the user discover an empty reply.
+      notify("info", "Attachments were copied but Outlook may not show them yet - " +
+        "close the draft and reopen it from Drafts before sending.");
     }
     finish(event);
   } catch (e) {
