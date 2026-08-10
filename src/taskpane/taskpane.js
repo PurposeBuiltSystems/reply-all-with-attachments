@@ -45,10 +45,75 @@ var sigEl, statusEl;
 function el(id) { return document.getElementById(id); }
 function onClick(id, fn) { var e = el(id); if (e) { e.onclick = fn; } }
 
+
+/**
+ * Sign out (certification 1100.5.7.1). This add-in authenticates from the
+ * ribbon command, not from this pane, but the two share an origin - so the
+ * MSAL cache cleared here is the same one the command uses.
+ *
+ * Under nested app authentication Outlook owns the session and no add-in can
+ * end it. This clears the tokens and account this add-in cached, and says so;
+ * claiming to sign the user out of Outlook would be false.
+ */
+var AUTH_CLIENT_ID = "87764ff9-16e7-4e2f-8164-38eff9f3a895";
+var signOutPca = null;
+
+function authPca() {
+  if (!signOutPca && typeof msal !== "undefined") {
+    signOutPca = msal.createNestablePublicClientApplication({
+      auth: { clientId: AUTH_CLIENT_ID, authority: "https://login.microsoftonline.com/common" },
+    });
+  }
+  return signOutPca;
+}
+
+async function renderAuthState() {
+  var who = null;
+  try {
+    var p = authPca();
+    if (p) {
+      var pca = await p;
+      var a = (pca.getAllAccounts && pca.getAllAccounts()) || [];
+      who = a.length ? (a[0].username || a[0].name || "signed in") : null;
+    }
+  } catch (e) { who = null; }
+  var w = el("authWho"); if (w) { w.textContent = who ? ("Signed in as " + who) : "Not signed in"; }
+  var b = el("signOut"); if (b) { b.hidden = !who; }
+}
+
+async function doSignOut() {
+  var b = el("signOut"); if (b) { b.disabled = true; }
+  try {
+    var p = authPca();
+    if (p) {
+      var pca = await p;
+      var accts = (pca.getAllAccounts && pca.getAllAccounts()) || [];
+      for (var i = 0; i < accts.length; i++) {
+        try {
+          if (pca.clearCache) { await pca.clearCache({ account: accts[i] }); }
+          else if (pca.logoutPopup) { await pca.logoutPopup({ account: accts[i] }); }
+        } catch (e) { /* keep clearing the rest */ }
+      }
+    }
+    signOutPca = null;
+    var w = el("authWho");
+    if (w) {
+      w.textContent = "Signed out \u2014 this add-in's saved tokens are cleared. Your Outlook " +
+        "session is separate and is not affected; no add-in can end it.";
+    }
+  } finally {
+    if (b) { b.disabled = false; }
+    setTimeout(renderAuthState, 2500);
+  }
+}
+
 Office.onReady(function () {
   sigEl = el("sig");
   statusEl = el("status");
   if (sigEl) { sigEl.innerHTML = readSignature(Office.context.roamingSettings) || ""; }
+
+  onClick("signOut", doSignOut);
+  renderAuthState();
 
   onClick("save", save);
   onClick("clear", function () {

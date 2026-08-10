@@ -5,11 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Reply All with Attachments — Signature</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <!-- Needed only for Sign out: the pane and the ribbon command share an
+       origin, so clearing the MSAL cache here clears the one the command uses. -->
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
   <style>
     body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 16px; color: #242424; }
     h1 { font-size: 1.1rem; color: #0f6cbd; margin: 0 0 8px; }
     ol { padding-left: 1.1rem; margin: 8px 0 12px; }
     li { margin: 4px 0; }
+    .auth-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 4px 0 12px; font-size: 12.5px; color: #616161; }
+    .auth-row #authWho { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.linkish { background: none; border: none; padding: 8px 4px; min-height: 32px; font: inherit; color: #0f6cbd; cursor: pointer; text-decoration: underline; }
     #sig {
       border: 1px solid #8a8886; border-radius: 4px; min-height: 140px; padding: 10px;
       overflow: auto; background: #fff;
@@ -32,6 +38,12 @@
 </head>
 <body>
   <h1>Your reply signature</h1>
+  <!-- Certification 1100.5.7.1: a visible way out wherever there is a way in.
+       This add-in signs in from the ribbon command; the pane is its only UI. -->
+  <div id="authRow" class="auth-row">
+    <span id="authWho">Checking sign-in…</span>
+    <button id="signOut" class="linkish" type="button" hidden>Sign out</button>
+  </div>
   <p class="muted">This signature is added to the top of every <strong>Reply All with Attachments</strong> reply.</p>
   <ol>
     <li>Open an email that already shows your signature (one you sent works great), or Outlook Settings → Mail.</li>
@@ -53,6 +65,6 @@
   </div>
   <div class="row"><span id="status"></span></div>
 
-  <script src="taskpane.js?v=4"></script>
+  <script src="taskpane.js?v=5"></script>
 </body>
 </html>
