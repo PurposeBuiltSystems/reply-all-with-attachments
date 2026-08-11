@@ -354,8 +354,36 @@ function readFilesAsDataUrls(files, cb) {
   });
 }
 
+/**
+ * Where the logo lands.
+ *
+ * Choosing a file opens the OS picker, which takes focus off the editable box.
+ * focus() restores focus but NOT the caret, so execCommand("insertHTML") used
+ * to insert wherever the browser happened to leave it - usually part-way up
+ * the signature. That is the reported bug: the image appearing above the last
+ * line of text.
+ *
+ * Restoring the remembered caret was the obvious fix and is still wrong: the
+ * caret sits wherever you last typed, which is frequently not the last line,
+ * so the logo still lands mid-signature and it still looks arbitrary.
+ *
+ * This button therefore always appends at the end. It is the one position that
+ * is predictable before you click, it is what a signature logo almost always
+ * wants, and it is stated next to the button so nothing is a surprise. Placing
+ * an image precisely is still possible - pasting drops it at the cursor, which
+ * the browser handles natively and this code does not touch.
+ */
 function insertHtml(html) {
+  if (!sigEl) { return; }
   sigEl.focus();
+  var sel = window.getSelection && window.getSelection();
+  if (sel) {
+    var end = document.createRange();
+    end.selectNodeContents(sigEl);
+    end.collapse(false);          // false = collapse to the END of the contents
+    sel.removeAllRanges();
+    sel.addRange(end);
+  }
   document.execCommand("insertHTML", false, html);
 }
 
