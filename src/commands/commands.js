@@ -61,6 +61,11 @@ async function getToken() {
   var pca = await withTimeout(getPca(), 20000,
     "Sign-in didn't start. Fully quit Outlook (Cmd+Q) and reopen, then try again.");
   try {
+    // The pane's Sign out sets this. Honour it here, or that button is
+    // decorative: the command would keep working on a silent token.
+    var out = false;
+    try { out = Office.context.roamingSettings.get("raaSignedOut") === true; } catch (e2) { out = false; }
+    if (out) { throw new Error("signed out of the add-in"); }
     return (await withTimeout(pca.acquireTokenSilent({ scopes: SCOPES }), 20000, "silent timeout")).accessToken;
   } catch (e) {
     var interactive = await withTimeout(
@@ -68,6 +73,10 @@ async function getToken() {
       "Sign-in didn't finish \u2014 a Microsoft sign-in window may have opened behind Outlook. " +
       "Check for it, finish signing in, and click again. If none appeared, fully quit Outlook " +
       "(Cmd+Q), reopen, and retry.");
+    try {
+      Office.context.roamingSettings.set("raaSignedOut", false);
+      Office.context.roamingSettings.saveAsync(function () {});
+    } catch (e3) { /* non-fatal */ }
     return interactive.accessToken;
   }
 }

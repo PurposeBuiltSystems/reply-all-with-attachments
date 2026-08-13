@@ -58,6 +58,31 @@ function onClick(id, fn) { var e = el(id); if (e) { e.onclick = fn; } }
 var AUTH_CLIENT_ID = "87764ff9-16e7-4e2f-8164-38eff9f3a895";
 var signOutPca = null;
 
+/**
+ * Add-in sign-out state.
+ *
+ * Certification rejected the naive version on a sibling add-in: "after
+ * clicking sign-out there is no response or not signed out." Under nested app
+ * authentication Outlook owns the session and getAllAccounts() reports the
+ * HOST's account, not a cache this add-in controls - so clearing MSAL's cache
+ * changes nothing visible and the next silent token still works.
+ *
+ * What this add-in can honestly deliver is refusing to act until the user
+ * authenticates again. The ribbon command reads this same flag before using a
+ * silent token, so signing out here genuinely gates Reply All.
+ */
+var SIGNED_OUT_KEY = "raaSignedOut";
+
+function readSignedOut() {
+  try { return Office.context.roamingSettings.get(SIGNED_OUT_KEY) === true; } catch (e) { return false; }
+}
+function writeSignedOut(v) {
+  try {
+    Office.context.roamingSettings.set(SIGNED_OUT_KEY, !!v);
+    Office.context.roamingSettings.saveAsync(function () {});
+  } catch (e) { /* in-memory only is still correct for this session */ }
+}
+
 function authPca() {
   if (!signOutPca && typeof msal !== "undefined") {
     signOutPca = msal.createNestablePublicClientApplication({
@@ -69,22 +94,33 @@ function authPca() {
 
 async function renderAuthState() {
   var who = null;
-  try {
-    var p = authPca();
-    if (p) {
-      var pca = await p;
-      var a = (pca.getAllAccounts && pca.getAllAccounts()) || [];
-      who = a.length ? (a[0].username || a[0].name || "signed in") : null;
-    }
-  } catch (e) { who = null; }
+  if (!readSignedOut()) {
+    try {
+      var p = authPca();
+      if (p) {
+        var pca = await p;
+        var a = (pca.getAllAccounts && pca.getAllAccounts()) || [];
+        who = a.length ? (a[0].username || a[0].name || "signed in") : null;
+      }
+    } catch (e) { who = null; }
+  }
   var w = el("authWho"); if (w) { w.textContent = who ? ("Signed in as " + who) : "Not signed in"; }
   var b = el("signOut"); if (b) { b.hidden = !who; }
 }
 
 async function doSignOut() {
-  var b = el("signOut"); if (b) { b.disabled = true; }
+  // Flip the state and the UI first: awaiting a broker handshake before
+  // showing anything is what certification saw as the button doing nothing.
+  writeSignedOut(true);
+  var b = el("signOut"); if (b) { b.disabled = true; b.hidden = true; }
+  var w = el("authWho");
+  if (w) {
+    w.textContent = "Signed out. Reply All with Attachments will ask you to sign in again " +
+      "before its next use. Your Outlook session is separate and is not affected.";
+  }
   try {
-    var p = authPca();
+    var p = signOutPca;
+    signOutPca = null;
     if (p) {
       var pca = await p;
       var accts = (pca.getAllAccounts && pca.getAllAccounts()) || [];
@@ -92,18 +128,11 @@ async function doSignOut() {
         try {
           if (pca.clearCache) { await pca.clearCache({ account: accts[i] }); }
           else if (pca.logoutPopup) { await pca.logoutPopup({ account: accts[i] }); }
-        } catch (e) { /* keep clearing the rest */ }
+        } catch (e) { /* best effort; the enforced state stands */ }
       }
-    }
-    signOutPca = null;
-    var w = el("authWho");
-    if (w) {
-      w.textContent = "Signed out \u2014 this add-in's saved tokens are cleared. Your Outlook " +
-        "session is separate and is not affected; no add-in can end it.";
     }
   } finally {
     if (b) { b.disabled = false; }
-    setTimeout(renderAuthState, 2500);
   }
 }
 
