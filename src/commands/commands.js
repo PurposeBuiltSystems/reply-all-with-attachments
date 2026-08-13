@@ -84,8 +84,27 @@ async function getToken() {
 /** Thin Graph fetch helper. */
 function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+
+/**
+ * Microsoft Graph throttles, and this add-in makes bursts of calls - a
+ * records bundle or a bulk post is dozens to hundreds. An unretried 429
+ * aborts the whole run part-way, which is the worst possible failure for
+ * work that is half-written. One respectful retry honouring Retry-After
+ * absorbs the overwhelming majority of throttling without hammering the
+ * service; anything past that is a real outage and should surface.
+ */
+async function fetchRetry(url, opts) {
+  var res = await fetch(url, opts);
+  if (res.status === 429 || res.status === 503) {
+    var wait = Number(res.headers.get("Retry-After") || 3) * 1000;
+    await new Promise(function (r) { setTimeout(r, Math.min(wait, 15000)); });
+    res = await fetch(url, opts);
+  }
+  return res;
+}
+
 async function graph(token, method, path, body) {
-  var res = await fetch(GRAPH + path, {
+  var res = await fetchRetry(GRAPH + path, {
     method: method,
     headers: {
       Authorization: "Bearer " + token,
