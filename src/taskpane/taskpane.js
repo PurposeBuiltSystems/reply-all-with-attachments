@@ -176,6 +176,14 @@ Office.onReady(function () {
   if (sigEl) {
     sigEl.addEventListener("paste", function (e) {
       var clipFiles = imageFilesFromClipboard(e.clipboardData);
+      var html = e.clipboardData && e.clipboardData.getData && e.clipboardData.getData("text/html");
+      if (html) {
+        // Only intercept a real HTML paste. A screenshot arrives as a file with
+        // no text/html, and the default paste plus embedImages already handles
+        // that correctly - don't break it.
+        e.preventDefault();
+        insertAtCursor(cleanPastedHtml(html));
+      }
       setTimeout(function () { embedImages(clipFiles); }, 0);
     });
   }
@@ -415,6 +423,62 @@ function readFilesAsDataUrls(files, cb) {
  * display:block across the whole signature is what moved a user's carefully
  * placed logo once before.
  */
+/**
+ * Clean what Outlook and Word put on the clipboard.
+ *
+ * Copying a signature out of Outlook yields <p class="MsoNormal"> whose
+ * margins are zeroed by a stylesheet that does NOT come with the fragment.
+ * A contenteditable never applies that stylesheet, so every paragraph falls
+ * back to the browser default of 1em top and bottom - which is the reported
+ * bug: pasting a signature adds a blank line between every line, in the box
+ * and in the mail that goes out.
+ *
+ * So the margins are made explicit, and Word's private markup is dropped.
+ * Deliberately conservative: only Word/Office artefacts are touched. Real
+ * formatting the user chose - bold, colour, links, sizes - is left alone,
+ * because a paste that quietly restyles someone's signature is a worse bug
+ * than the spacing.
+ */
+function cleanPastedHtml(html) {
+  html = String(html)
+    .replace(/<!--[\s\S]*?-->/g, "")                                  // Word conditional comments
+    .replace(/<\/?o:p[^>]*>/gi, "")                                    // Word's empty-paragraph markers
+    .replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, "")             // stylesheets that won't apply anyway
+    .replace(/<\/?(html|head|body|meta|link)[^>]*>/gi, "");
+
+  var box = document.createElement("div");
+  box.innerHTML = html;
+
+  var all = box.querySelectorAll("*");
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i];
+    var cls = el.getAttribute("class");
+    if (cls && /\bMso/i.test(cls)) { el.removeAttribute("class"); }
+    var st = el.getAttribute("style");
+    if (st) {
+      var kept = st.split(";").filter(function (d) { return d.trim() && !/^\s*mso-/i.test(d); }).join(";");
+      if (kept.trim()) { el.setAttribute("style", kept); } else { el.removeAttribute("style"); }
+    }
+  }
+  // The stylesheet that zeroed these is gone, so say it on the element.
+  var blocks = box.querySelectorAll("p");
+  for (var j = 0; j < blocks.length; j++) {
+    var b = blocks[j];
+    var bs = b.getAttribute("style") || "";
+    if (!/(^|;)\s*margin/i.test(bs)) {
+      b.setAttribute("style", (bs && bs.trim() ? bs.replace(/;?\s*$/, ";") : "") + "margin:0");
+    }
+  }
+  return box.innerHTML;
+}
+
+/** Insert at the caret, leaving it where the user put it (unlike insertHtml). */
+function insertAtCursor(html) {
+  if (!sigEl) { return; }
+  sigEl.focus();
+  document.execCommand("insertHTML", false, html);
+}
+
 function appendImageAtEnd(src) {
   if (!sigEl) { return; }
   var current = sigEl.innerHTML.replace(/(&nbsp;|\s)+$/i, "");
