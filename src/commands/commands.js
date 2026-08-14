@@ -167,6 +167,35 @@ async function replyAllWithAttachments(event) {
       });
     }
 
+    // 1c. Confirm the signature's inline images survived the body write.
+    //     If a cid reference was stripped, the attachment is still there and
+    //     orphaned - and an orphaned inline image is drawn in an arbitrary
+    //     place. Better to remove it than to let it appear somewhere wrong:
+    //     a missing logo is a smaller failure than one in the wrong spot, and
+    //     it is visible rather than confusing.
+    if (images.length) {
+      var after = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
+      var afterBody = (after && after.body && after.body.content) || "";
+      var stranded = images.filter(function (im) {
+        return afterBody.indexOf("cid:" + im.cid) === -1;
+      });
+      if (stranded.length) {
+        var atts = await graph(token, "GET",
+          "/me/messages/" + draft.id + "/attachments?$select=id,name,isInline,contentId");
+        for (var z = 0; z < (atts.value || []).length; z++) {
+          var at = atts.value[z];
+          var isStranded = at.isInline && stranded.some(function (im) { return im.cid === at.contentId; });
+          if (isStranded) {
+            try {
+              await graph(token, "DELETE", "/me/messages/" + draft.id + "/attachments/" + at.id);
+            } catch (delErr) { /* leaving it is no worse than the bug we're avoiding */ }
+          }
+        }
+        notify("info", "Your signature image couldn't be embedded by the mail server and was " +
+          "left out, rather than placed somewhere wrong.");
+      }
+    }
+
     // 2. Fetch the original message's file attachments (skip inline images).
     //    isInline alone is unreliable — many clients embed signature logos
     //    without setting it — so also treat any attachment whose contentId is
@@ -290,7 +319,13 @@ function extractInlineImages(html) {
   var n = 0;
   function take(ctype, b64) {
     n++;
-    var cid = "raasig" + n;
+    // A Content-ID must be an addr-spec (id@domain), per RFC 2045/2392. A bare
+    // token like "raasig1" is not, and Exchange silently DROPS the
+    // <img src="cid:raasig1"> reference while KEEPING the attachment - leaving
+    // an inline image nothing points at, which Outlook then renders wherever
+    // it likes. That is the reported bug: the logo appearing beside the last
+    // line of the signature instead of where it was placed.
+    var cid = "raasig" + n + "@purposebuilt.systems";
     var ext = (/\/(\w+)/.exec(ctype) || [])[1] || "png";
     images.push({ cid: cid, contentType: ctype, contentBytes: b64, name: "image" + n + "." + ext });
     return cid;
