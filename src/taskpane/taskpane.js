@@ -163,7 +163,7 @@ Office.onReady(function () {
       if (f) {
         readFileAsDataUrl(f, function (url) {
           embedFromDataUrl(url, function (small) {
-            insertHtml('<img src="' + small + '" />');
+            appendImageAtEnd(small);
             status("Logo added. Click Save to keep it.");
           });
         });
@@ -402,6 +402,26 @@ function readFilesAsDataUrls(files, cb) {
  * an image precisely is still possible - pasting drops it at the cursor, which
  * the browser handles natively and this code does not touch.
  */
+/**
+ * Append a logo at the end of the signature, on its own line.
+ *
+ * An <img> is inline, so appending one straight after the last line of text
+ * puts it BESIDE that text - which is what the "at the end" fix produced: the
+ * logo sitting to the right of the last line instead of under it. Being at the
+ * end of the content and being on its own line are not the same thing.
+ *
+ * The break is added only here, at insert time, and only when the signature
+ * does not already end with one. Existing images are never rewritten: forcing
+ * display:block across the whole signature is what moved a user's carefully
+ * placed logo once before.
+ */
+function appendImageAtEnd(src) {
+  if (!sigEl) { return; }
+  var current = sigEl.innerHTML.replace(/(&nbsp;|\s)+$/i, "");
+  var endsWithBreak = current === "" || /(<br\s*\/?>|<\/div>|<\/p>|<\/li>|<\/tr>)$/i.test(current);
+  insertHtml((endsWithBreak ? "" : "<br>") + '<img src="' + src + '" />');
+}
+
 function insertHtml(html) {
   if (!sigEl) { return; }
   sigEl.focus();
