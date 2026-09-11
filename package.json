@@ -11,8 +11,8 @@
     "sideload:web": "office-addin-debugging start manifest.xml web",
     "stop": "office-addin-debugging stop manifest.xml",
     "validate": "office-addin-manifest validate manifest.xml",
-    "check": "node tools/check-undeclared.js",
-    "test": "node tools/check-undeclared.js"
+    "check": "node tools/check-undeclared.js && node tools/check-pages.js",
+    "test": "node tools/check-undeclared.js && node tools/check-pages.js"
   },
   "author": "Matthew Miller",
   "license": "MIT",
