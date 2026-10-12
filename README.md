@@ -7,8 +7,10 @@ This button reopens a **Reply All** with those attachments restored.
 - **Manifest:** add-in only (XML) — works on Outlook on the web, new Outlook for
   Windows, classic Outlook desktop, and Outlook for Mac.
 - **Trigger:** one ribbon button, no task pane.
-- **APIs:** `item.getAttachmentContentAsync` (Mailbox 1.8) +
-  `displayReplyAllFormAsync` (Mailbox 1.9).
+- **APIs:** delegated Microsoft Graph creates and populates the draft;
+  Office.js opens it after the attachments and signature are verified.
+- **Authentication:** nested app authentication through MSAL, with the
+  delegated `Mail.ReadWrite` scope.
 - **No build step, no frameworks** — plain Office.js, served by a tiny Node
   HTTPS server. Only dev dependencies are Microsoft's add-in tooling.
 
@@ -56,28 +58,45 @@ local CA so the browser/Outlook trusts `https://localhost:3000`.
 
 ## How it works
 
-`src/commands/commands.js`:
+1. Signs in and creates one Reply All draft through Microsoft Graph.
+2. Places the saved signature inside the reply's HTML body, placing images beneath the signature text and embedding logos with unique inline content IDs.
+3. Copies the original file attachments, following collection paging and
+   using upload sessions for large files.
+4. Waits for the signature images and copied files to be visible on the draft.
+5. Uses Outlook's asynchronous open API where available and waits for its
+   callback before completing the command. A definite open failure is retried
+   on the same draft. Older clients use the legacy open API.
 
-1. Reads `item.attachments`, skipping inline images (the quoted reply keeps
-   those automatically).
-2. Fetches each attachment's bytes via `getAttachmentContentAsync`.
-3. Maps each to a `ReplyFormAttachment`:
-   - **Base64** (normal files) → re-attached directly.
-   - **Url** (cloud attachments) → re-attached by URL.
-   - **Eml / ICalendar** (attached messages/events) → wrapped as a `.eml`/`.ics`.
-4. Calls `displayReplyAllFormAsync({ attachments })`.
+The add-in creates drafts only. You review and send them yourself. If Outlook
+cannot open a saved draft, the notification points to Drafts rather than
+requiring another click that would create a second reply.
 
-Attachments that can't be carried over are skipped and reported via an
-in-message notification.
+## Signature images
+
+Paste a signature into the Signature pane and Save. Images appear on their own
+lines beneath the signature text. Image display sizes are retained before
+compression, and the signature is isolated from the quoted thread's formatting.
+Existing saved signatures use this layout automatically when creating a reply.
+
+Review the logo in the saved draft before sending. A missing or broken image
+should be checked by reopening the draft from Drafts.
+
+## Checks
+
+Run `npm test` for page wiring, undeclared references, Graph transport and upload
+checks, signature HTML regressions, and simulated first-click/open retry tests.
+These tests do not connect to your mailbox. A live Outlook smoke test is still
+needed for client-specific rendering and sync behavior.
 
 ## Known limits
 
-- Total reply form data is size-limited; very large attachments may be rejected
-  by Outlook. The add-in reports how many were skipped.
-- `htmlBody` is capped at 32 KB by the API (we send an empty body; Outlook adds
-  the quoted original).
-- Requires Mailbox requirement set **1.9**. Very old Outlook builds without 1.9
-  won't show the button.
+- Exchange mailbox attachment limits still apply to drafts and upload sessions.
+- Outlook on the web and new Outlook restrict the native open API to bodies of
+  at most 32K characters. If native opening fails, use the saved draft in Drafts.
+- Asynchronous open confirmation requires Mailbox 1.9. Older supported desktop
+  clients use the legacy API, which cannot report whether the window opened.
+- Outlook mobile does not support the native message-open APIs. The reply is
+  still saved to Drafts for review.
 
 ## Publishing (later)
 

@@ -14,7 +14,7 @@
  * GRAPH-SETUP: paste your Entra app's Application (client) ID into CLIENT_ID.
  */
 
-/* global Office, msal */
+/* global Office, msal, SignatureLayout */
 
 var CLIENT_ID = "87764ff9-16e7-4e2f-8164-38eff9f3a895"; // Entra app registration (PurposeBuiltSystems)
 var GRAPH = "https://graph.microsoft.com/v1.0";
@@ -25,6 +25,24 @@ var pcaPromise = null;
 Office.onReady(function () {});
 if (Office.actions && Office.actions.associate) {
   Office.actions.associate("replyAllWithAttachments", replyAllWithAttachments);
+}
+
+// Older cached HTML may not include the new layout script yet. Load it on
+// demand so a fresh command script still works on the very first click.
+async function ensureSignatureLayout() {
+  if (typeof SignatureLayout !== "undefined") { return; }
+  await new Promise(function (resolve, reject) {
+    var timer = setTimeout(function () { reject(new Error("Signature layout didn't load. Check your connection and try again.")); }, 20000);
+    var script = document.createElement("script");
+    script.src = new URL("../signature-layout.js?v=1", document.baseURI).href;
+    script.onload = function () {
+      clearTimeout(timer);
+      if (typeof SignatureLayout !== "undefined") { resolve(); }
+      else { reject(new Error("Signature layout couldn't load. Reopen the Signature pane and try again.")); }
+    };
+    script.onerror = function () { clearTimeout(timer); reject(new Error("Signature layout couldn't load. Check your connection and try again.")); };
+    document.head.appendChild(script);
+  });
 }
 
 /** Lazily create the MSAL nestable client (NAA). */
@@ -96,15 +114,22 @@ function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 async function fetchRetry(url, opts) {
   var res = await fetch(url, opts);
   if (res.status === 429 || res.status === 503) {
-    var wait = Number(res.headers.get("Retry-After") || 3) * 1000;
-    await new Promise(function (r) { setTimeout(r, Math.min(wait, 15000)); });
+    var retryAfter = res.headers.get("Retry-After");
+    var wait = retryAfter && /^\d+(\.\d+)?$/.test(retryAfter.trim())
+      ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();
+    if (!isFinite(wait)) { wait = 3000; }
+    wait = Math.max(0, wait);
+    // Surface long throttles rather than retrying before the server allows it.
+    if (wait > 15000) { return res; }
+    await new Promise(function (r) { setTimeout(r, wait); });
     res = await fetch(url, opts);
   }
   return res;
 }
 
 async function graph(token, method, path, body) {
-  var res = await fetchRetry(GRAPH + path, {
+  var url = path.indexOf(GRAPH + "/") === 0 ? path : GRAPH + path;
+  var res = await fetchRetry(url, {
     method: method,
     headers: {
       Authorization: "Bearer " + token,
@@ -119,6 +144,59 @@ async function graph(token, method, path, body) {
   return res.status === 204 ? null : res.json();
 }
 
+/** Read every page, including attachment collections with server-side paging. */
+async function graphAll(token, path) {
+  var out = [];
+  var next = path;
+  var pages = 0;
+  while (next && pages++ < 100) {
+    var page = await graph(token, "GET", next);
+    out = out.concat(page.value || []);
+    next = page["@odata.nextLink"] || null;
+    if (next && next.indexOf(GRAPH + "/") !== 0) {
+      throw new Error("Unexpected Graph paging URL.");
+    }
+  }
+  if (next) { throw new Error("Attachment results exceeded the scan limit."); }
+  return out;
+}
+
+/** Graph requires an upload session for files at or above 3 MB. */
+async function copyFileAttachment(token, draftId, file, base64) {
+  var path = "/me/messages/" + draftId + "/attachments";
+  var binary = atob(base64);
+  if (binary.length < 3000000) {
+    return graph(token, "POST", path, {
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: file.name,
+      contentType: file.contentType,
+      contentBytes: base64,
+    });
+  }
+  var session = await graph(token, "POST", path + "/createUploadSession", {
+    AttachmentItem: { attachmentType: "file", name: file.name, size: binary.length, contentType: file.contentType },
+  });
+  // Sequential ranges under 4 MB; the final response must confirm creation.
+  var CHUNK = 3276800;
+  for (var start = 0; start < binary.length; start += CHUNK) {
+    var end = Math.min(start + CHUNK, binary.length);
+    var bytes = new Uint8Array(end - start);
+    for (var i = start; i < end; i++) { bytes[i - start] = binary.charCodeAt(i); }
+    var res = await fetchRetry(session.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Range": "bytes " + start + "-" + (end - 1) + "/" + binary.length,
+      },
+      body: bytes,
+    });
+    // The session URL is pre-authenticated: do not send a Graph bearer token.
+    if (!res.ok || (end === binary.length && res.status !== 201)) {
+      throw new Error("Attachment upload " + file.name + " -> " + res.status);
+    }
+  }
+}
+
 /** @param {Office.AddinCommands.Event} event */
 async function replyAllWithAttachments(event) {
   try {
@@ -129,7 +207,10 @@ async function replyAllWithAttachments(event) {
       Office.MailboxEnums.RestVersion.v2_0
     );
 
+    notify("info", "Preparing your reply with attachments…");
     var token = await getToken();
+    var sig = readSignature(Office.context.roamingSettings);
+    if (sig) { await ensureSignatureLayout(); }
 
     // 1. Create the Reply All draft (Graph omits original attachments, like Outlook).
     var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
@@ -139,16 +220,15 @@ async function replyAllWithAttachments(event) {
     //     saved a signature, insert it above the quoted thread — embedding its
     //     logo as an inline cid attachment so it renders reliably (some clients
     //     strip raw data: URIs in mail).
-    var sig = readSignature(Office.context.roamingSettings);
     var d = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
     var body = (d && d.body && d.body.content) || "";
     var tidied = tidyQuotedHeader(body);
     var content = tidied;
     var images = [];
     if (sig) {
-      var ex = extractInlineImages(sig);
+      var ex = extractInlineImages(SignatureLayout.prepare(sig));
       images = ex.images;
-      content = ex.html + "<br><br>" + tidied;
+      content = prependSignature(tidied, ex.html);
     }
     if (sig || tidied !== body) {
       for (var k = 0; k < images.length; k++) {
@@ -167,41 +247,12 @@ async function replyAllWithAttachments(event) {
       });
     }
 
-    // 1c. Confirm the signature's inline images survived the body write.
-    //     If a cid reference was stripped, the attachment is still there and
-    //     orphaned - and an orphaned inline image is drawn in an arbitrary
-    //     place. Better to remove it than to let it appear somewhere wrong:
-    //     a missing logo is a smaller failure than one in the wrong spot, and
-    //     it is visible rather than confusing.
-    if (images.length) {
-      var after = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
-      var afterBody = (after && after.body && after.body.content) || "";
-      var stranded = images.filter(function (im) {
-        return afterBody.indexOf("cid:" + im.cid) === -1;
-      });
-      if (stranded.length) {
-        var atts = await graph(token, "GET",
-          "/me/messages/" + draft.id + "/attachments?$select=id,name,isInline,contentId");
-        for (var z = 0; z < (atts.value || []).length; z++) {
-          var at = atts.value[z];
-          var isStranded = at.isInline && stranded.some(function (im) { return im.cid === at.contentId; });
-          if (isStranded) {
-            try {
-              await graph(token, "DELETE", "/me/messages/" + draft.id + "/attachments/" + at.id);
-            } catch (delErr) { /* leaving it is no worse than the bug we're avoiding */ }
-          }
-        }
-        notify("info", "Your signature image couldn't be embedded by the mail server and was " +
-          "left out, rather than placed somewhere wrong.");
-      }
-    }
-
     // 2. Fetch the original message's file attachments (skip inline images).
     //    isInline alone is unreliable — many clients embed signature logos
     //    without setting it — so also treat any attachment whose contentId is
     //    referenced as cid: in the quoted body as inline.
-    var attachments = await graph(token, "GET", "/me/messages/" + restId + "/attachments");
-    var files = (attachments.value || []).filter(function (a) {
+    var attachments = await graphAll(token, "/me/messages/" + restId + "/attachments");
+    var files = attachments.filter(function (a) {
       if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") { return false; }
       if (a.isInline) { return false; }
       if (a.contentId && content.indexOf("cid:" + a.contentId) !== -1) { return false; }
@@ -211,16 +262,14 @@ async function replyAllWithAttachments(event) {
     // 2b. createReplyAll already carries the inline images the quoted thread
     //     needs, and some senders attach the same file twice — skip anything
     //     already on the draft (or already copied) so nothing lands twice.
-    var existing = await graph(
+    var existing = await graphAll(
       token,
-      "GET",
       "/me/messages/" + draft.id + "/attachments?$select=name,size"
     );
     var seen = {};
-    (existing.value || []).forEach(function (a) { seen[a.name + "|" + a.size] = true; });
+    existing.forEach(function (a) { seen[a.name + "|" + a.size] = true; });
 
-    // 3. Copy each onto the draft. (Large attachments may need their own GET for
-    //    contentBytes; handled in a later pass if needed.)
+    // 3. Copy each file; use an upload session for large attachments.
     var skipped = 0;
     var copied = {};
     for (var i = 0; i < files.length; i++) {
@@ -235,68 +284,112 @@ async function replyAllWithAttachments(event) {
         bytes = full && full.contentBytes;
       }
       if (!bytes) { skipped++; continue; }
-      await graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
-        "@odata.type": "#microsoft.graph.fileAttachment",
-        name: f.name,
-        contentType: f.contentType,
-        contentBytes: bytes,
-      });
+      await copyFileAttachment(token, draft.id, f, bytes);
       copied[key] = true;
     }
 
-    // 3b. Confirm the server actually has them before opening anything.
-    //
-    //     Reported symptom: the first attempt sometimes opens a reply with no
-    //     attachments, and repeating it works. Every call above is awaited and
-    //     graph() throws on any non-2xx, so a silent copy failure isn't
-    //     possible - which points at the draft being opened before Outlook has
-    //     caught up with the copies. Opening early is the one thing here we
-    //     control, so don't: re-read the draft until the server reports what we
-    //     expect, and only then open it.
-    var expected = 0;
-    for (var q = 0; q < files.length; q++) {
-      if (copied[files[q].name + "|" + files[q].size]) { expected++; }
-    }
+    // Copying files gives the signature write time to replicate. Verify both
+    // its CID references and attachments; never delete a logo on a stale read.
+    if (images.length) { await waitForSignatureImages(token, draft.id, images); }
+
+    // Confirm every copied file before asking Outlook to open the draft.
+    var expected = Object.keys(copied).length;
     var present = 0;
     if (expected > 0) {
       for (var attempt = 0; attempt < 5; attempt++) {
-        var check = await graph(
-          token, "GET", "/me/messages/" + draft.id + "/attachments?$select=name,size,isInline"
+        var check = await graphAll(
+          token, "/me/messages/" + draft.id + "/attachments?$select=name,size,isInline"
         );
-        present = (check.value || []).filter(function (a) {
+        present = check.filter(function (a) {
           return !a.isInline && copied[a.name + "|" + a.size];
         }).length;
         if (present >= expected) { break; }
-        await delay(400 * (attempt + 1));   // 0.4s, 0.8s, 1.2s, 1.6s
+        if (attempt < 4) { await delay(400 * (attempt + 1)); }
       }
+    }
+
+    if (expected > 0 && present < expected) {
+      throw new Error("The draft is saved but its attachments are still syncing. Open it from Drafts once syncing finishes.");
     }
 
     // 4. Open the populated draft for the user to review/send. Opening a
     //    message form isn't available on every client (Outlook mobile) —
     //    the draft already exists either way, so point at Drafts instead of
     //    reporting a failure.
+    notify("info", "Opening your reply draft…");
     try {
-      var ewsId = Office.context.mailbox.convertToEwsId(
-        draft.id,
-        Office.MailboxEnums.RestVersion.v2_0
-      );
-      Office.context.mailbox.displayMessageForm(ewsId);
+      await openDraft(draft.id);
+      notify("info", "Reply draft ready. Review it before sending.");
     } catch (openErr) {
-      notify("info", "Reply All draft created with attachments - open your Drafts folder to review and send.");
+      notify("info", "Reply draft saved, but Outlook couldn't open it. Open Drafts to review it; you don't need to click Reply All again.");
     }
 
     if (skipped > 0) {
       notify("info", skipped + " attachment(s) could not be copied and were skipped.");
-    } else if (expected > 0 && present < expected) {
-      // The copies were accepted but the server still isn't reporting them.
-      // Say so plainly rather than let the user discover an empty reply.
-      notify("info", "Attachments were copied but Outlook may not show them yet - " +
-        "close the draft and reopen it from Drafts before sending.");
     }
     finish(event);
   } catch (e) {
     notify("error", "Reply All with Attachments failed: " + (e && e.message ? e.message : e));
     finish(event);
+  }
+}
+
+// Insert into the existing document's body, not before its <html>/<head>.
+function prependSignature(html, signature) {
+  var prefix = signature + "<br><br>";
+  if (/<body\b[^>]*>/i.test(html)) {
+    return html.replace(/<body\b[^>]*>/i, function (bodyTag) { return bodyTag + prefix; });
+  }
+  return prefix + html;
+}
+
+function referencesImage(html, cid) {
+  var refs = String(html || "").match(/cid:[^"'\s<>]+/gi) || [];
+  return refs.some(function (ref) {
+    try { return decodeURIComponent(ref.slice(4)) === cid; }
+    catch (e) { return ref.slice(4) === cid; }
+  });
+}
+
+async function waitForSignatureImages(token, draftId, images) {
+  for (var attempt = 0; attempt < 5; attempt++) {
+    var message = await graph(token, "GET", "/me/messages/" + draftId + "?$select=body");
+    var html = (message && message.body && message.body.content) || "";
+    var attachments = await graphAll(token, "/me/messages/" + draftId + "/attachments?$select=isInline,contentId");
+    var ready = images.every(function (im) {
+      return referencesImage(html, im.cid) && attachments.some(function (a) {
+        return a.isInline && a.contentId === im.cid;
+      });
+    });
+    if (ready) { return; }
+    if (attempt < 4) { await delay(400 * (attempt + 1)); }
+  }
+  throw new Error("The signature image is still syncing. Your draft is saved in Drafts; no image was removed.");
+}
+
+// Keep the command runtime alive until Outlook confirms the open request.
+// Transient 'item not found' failures retry the SAME draft, without copying again.
+async function openDraft(draftId) {
+  var mailbox = Office.context.mailbox;
+  var ewsId = mailbox.convertToEwsId(draftId, Office.MailboxEnums.RestVersion.v2_0);
+  var requirements = Office.context.requirements;
+  var useAsync = typeof mailbox.displayMessageFormAsync === "function" &&
+    (!requirements || requirements.isSetSupported("Mailbox", "1.9"));
+  if (!useAsync) {
+    mailbox.displayMessageForm(ewsId);
+    // Legacy API has no acknowledgement; avoid tearing its runtime down immediately.
+    await delay(500);
+    return;
+  }
+  for (var attempt = 0; attempt < 3; attempt++) {
+    // A missing callback has an unknown outcome, so a timeout exits without
+    // retrying. Only a definite failed callback is retried below.
+    var result = await withTimeout(new Promise(function (resolve) {
+      mailbox.displayMessageFormAsync(ewsId, resolve);
+    }), 10000, "Outlook didn't confirm opening the draft. Check Drafts before trying again.");
+    if (result && result.status === Office.AsyncResultStatus.Succeeded) { return; }
+    if (attempt === 2) { throw new Error((result && result.error && result.error.message) || "Outlook couldn't open the draft."); }
+    await delay(600 * (attempt + 1));
   }
 }
 
@@ -317,6 +410,7 @@ function tidyQuotedHeader(html) {
 function extractInlineImages(html) {
   var images = [];
   var n = 0;
+  var instance = Date.now().toString(36) + Math.random().toString(36).slice(2);
   function take(ctype, b64) {
     n++;
     // A Content-ID must be an addr-spec (id@domain), per RFC 2045/2392. A bare
@@ -325,7 +419,7 @@ function extractInlineImages(html) {
     // an inline image nothing points at, which Outlook then renders wherever
     // it likes. That is the reported bug: the logo appearing beside the last
     // line of the signature instead of where it was placed.
-    var cid = "raasig" + n + "@purposebuilt.systems";
+    var cid = "raasig" + instance + "-" + n + "@purposebuilt.systems";
     var ext = (/\/(\w+)/.exec(ctype) || [])[1] || "png";
     images.push({ cid: cid, contentType: ctype, contentBytes: b64, name: "image" + n + "." + ext });
     return cid;

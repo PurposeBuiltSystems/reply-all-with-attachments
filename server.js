@@ -38,9 +38,12 @@ async function main() {
   https
     .createServer(httpsOptions, function (req, res) {
       // Resolve the request path inside ROOT, blocking traversal.
-      const urlPath = decodeURIComponent(req.url.split("?")[0]);
+      let urlPath;
+      try { urlPath = decodeURIComponent(req.url.split("?")[0]); }
+      catch (err) { return send(res, 400, "Malformed URL"); }
+      if (urlPath.includes("\0")) { return send(res, 400, "Malformed URL"); }
       let filePath = path.join(ROOT, urlPath === "/" ? "/index.html" : urlPath);
-      if (!filePath.startsWith(ROOT)) {
+      if (!filePath.startsWith(ROOT + path.sep)) {
         return send(res, 403, "Forbidden");
       }
 

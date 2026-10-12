@@ -18,7 +18,7 @@
  *      guaranteed path when the logo is cross-origin (canvas would be tainted).
  */
 
-/* global Office */
+/* global Office, SignatureLayout */
 
 var META = "raa.sig.meta";        // number of chunks
 var CHUNK = "raa.sig.";           // raa.sig.0, raa.sig.1, ...
@@ -136,9 +136,29 @@ async function doSignOut() {
   }
 }
 
-Office.onReady(function () {
+// Older cached HTML may not include the new layout script yet. Load it on
+// demand so a fresh command script still works on the very first click.
+async function ensureSignatureLayout() {
+  if (typeof SignatureLayout !== "undefined") { return; }
+  await new Promise(function (resolve, reject) {
+    var timer = setTimeout(function () { reject(new Error("Signature layout didn't load. Check your connection and try again.")); }, 20000);
+    var script = document.createElement("script");
+    script.src = new URL("../signature-layout.js?v=1", document.baseURI).href;
+    script.onload = function () {
+      clearTimeout(timer);
+      if (typeof SignatureLayout !== "undefined") { resolve(); }
+      else { reject(new Error("Signature layout couldn't load. Reopen the Signature pane and try again.")); }
+    };
+    script.onerror = function () { clearTimeout(timer); reject(new Error("Signature layout couldn't load. Check your connection and try again.")); };
+    document.head.appendChild(script);
+  });
+}
+
+Office.onReady(async function () {
   sigEl = el("sig");
   statusEl = el("status");
+  try { await ensureSignatureLayout(); }
+  catch (e) { status(e.message); return; }
   if (sigEl) { sigEl.innerHTML = readSignature(Office.context.roamingSettings) || ""; }
 
   onClick("signOut", doSignOut);
@@ -191,8 +211,8 @@ Office.onReady(function () {
 
 function save() {
   if (!sigEl) { return; }   // stale cached page: nothing to save from
-  compressExistingImages(); // shrink any oversized logo already in the box
-  normalizeImages();        // cap display width + stack text below the logo
+  normalizeImages();        // preserve alignment and display dimensions before compression
+  compressExistingImages(); // shrink only the stored image bytes
   var html = sigEl.innerHTML.trim();
   var rs = Office.context.roamingSettings;
   var unembedded = countUnembeddedImages();
@@ -343,26 +363,10 @@ function compressExistingImages() {
   }
 }
 
-/**
- * Keep a logo from overflowing the message, WITHOUT relaying it out. The
- * signature is the user's; where the logo sits relative to their text is
- * their decision. So: never set display, and only impose a width when the
- * signature gave none and the image is genuinely oversized.
- */
+/** Keep logo dimensions stable and place images beneath the signature text. */
 function normalizeImages() {
-  var imgs = sigEl.querySelectorAll("img");
-  for (var i = 0; i < imgs.length; i++) {
-    var img = imgs[i];
-    img.style.maxWidth = "100%";               // never wider than the message
-    var sized = img.getAttribute("width") || (img.style && img.style.width);
-    if (sized) { continue; }                   // the signature already said how big
-    var natural = img.naturalWidth || 0;
-    if (natural > MAX_LOGO_W) {
-      img.setAttribute("width", String(MAX_LOGO_W));
-      img.style.height = "auto";
-      img.removeAttribute("height");
-    }
-  }
+  SignatureLayout.stabilize(sigEl, MAX_LOGO_W);
+  SignatureLayout.imagesBelowText(sigEl);
 }
 
 function countUnembeddedImages() {
@@ -392,38 +396,6 @@ function readFilesAsDataUrls(files, cb) {
 }
 
 /**
- * Where the logo lands.
- *
- * Choosing a file opens the OS picker, which takes focus off the editable box.
- * focus() restores focus but NOT the caret, so execCommand("insertHTML") used
- * to insert wherever the browser happened to leave it - usually part-way up
- * the signature. That is the reported bug: the image appearing above the last
- * line of text.
- *
- * Restoring the remembered caret was the obvious fix and is still wrong: the
- * caret sits wherever you last typed, which is frequently not the last line,
- * so the logo still lands mid-signature and it still looks arbitrary.
- *
- * This button therefore always appends at the end. It is the one position that
- * is predictable before you click, it is what a signature logo almost always
- * wants, and it is stated next to the button so nothing is a surprise. Placing
- * an image precisely is still possible - pasting drops it at the cursor, which
- * the browser handles natively and this code does not touch.
- */
-/**
- * Append a logo at the end of the signature, on its own line.
- *
- * An <img> is inline, so appending one straight after the last line of text
- * puts it BESIDE that text - which is what the "at the end" fix produced: the
- * logo sitting to the right of the last line instead of under it. Being at the
- * end of the content and being on its own line are not the same thing.
- *
- * The break is added only here, at insert time, and only when the signature
- * does not already end with one. Existing images are never rewritten: forcing
- * display:block across the whole signature is what moved a user's carefully
- * placed logo once before.
- */
-/**
  * Clean what Outlook and Word put on the clipboard.
  *
  * Copying a signature out of Outlook yields <p class="MsoNormal"> whose
@@ -434,13 +406,14 @@ function readFilesAsDataUrls(files, cb) {
  * and in the mail that goes out.
  *
  * So the margins are made explicit, and Word's private markup is dropped.
- * Deliberately conservative: only Word/Office artefacts are touched. Real
+ * Text formatting is retained while logos move beneath the text. Real
  * formatting the user chose - bold, colour, links, sizes - is left alone,
  * because a paste that quietly restyles someone's signature is a worse bug
  * than the spacing.
  */
 function cleanPastedHtml(html) {
-  html = String(html)
+  var clipboardHtml = String(html);
+  html = clipboardHtml
     .replace(/<!--[\s\S]*?-->/g, "")                                  // Word conditional comments
     .replace(/<\/?o:p[^>]*>/gi, "")                                    // Word's empty-paragraph markers
     .replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, "")             // stylesheets that won't apply anyway
@@ -448,6 +421,7 @@ function cleanPastedHtml(html) {
 
   var box = document.createElement("div");
   box.innerHTML = html;
+  SignatureLayout.clipboardAlignment(box, clipboardHtml);
 
   var all = box.querySelectorAll("*");
   for (var i = 0; i < all.length; i++) {
@@ -469,6 +443,8 @@ function cleanPastedHtml(html) {
       b.setAttribute("style", (bs && bs.trim() ? bs.replace(/;?\s*$/, ";") : "") + "margin:0");
     }
   }
+  SignatureLayout.stabilize(box, MAX_LOGO_W);
+  SignatureLayout.imagesBelowText(box);
   return box.innerHTML;
 }
 
@@ -481,9 +457,19 @@ function insertAtCursor(html) {
 
 function appendImageAtEnd(src) {
   if (!sigEl) { return; }
-  var current = sigEl.innerHTML.replace(/(&nbsp;|\s)+$/i, "");
-  var endsWithBreak = current === "" || /(<br\s*\/?>|<\/div>|<\/p>|<\/li>|<\/tr>)$/i.test(current);
-  insertHtml((endsWithBreak ? "" : "<br>") + '<img src="' + src + '" />');
+  var img = document.createElement("img");
+  img.src = src;
+  sigEl.appendChild(img);
+  normalizeImages();
+  sigEl.focus();
+  var sel = window.getSelection && window.getSelection();
+  if (sel) {
+    var end = document.createRange();
+    end.selectNodeContents(sigEl);
+    end.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(end);
+  }
 }
 
 function insertHtml(html) {
