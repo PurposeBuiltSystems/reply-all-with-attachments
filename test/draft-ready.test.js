@@ -30,12 +30,12 @@ function load(options) {
         body = JSON.parse(opts.body).body.content; result = {};
       } else if (endpoint === "/me/messages/draft/attachments" && method === "POST") {
         inline.push(JSON.parse(opts.body)); result = { id: "logo" };
-      } else if (endpoint === "/me/messages/draft/attachments?$select=isInline,contentId") {
+      } else if (endpoint === "/me/messages/draft/attachments?$select=name,isInline,contentId") {
+        if (options.missingFiles) { fileReads++; }
         result = { value: inline };
       } else if (endpoint === "/me/messages/source/attachments") {
         result = { value: options.missingFiles ? [{ "@odata.type": "#microsoft.graph.fileAttachment", name: "report.txt", size: 3, contentBytes: "YWJj" }] : [] };
       } else if (endpoint === "/me/messages/draft/attachments?$select=name,size") result = { value: [] };
-      else if (endpoint === "/me/messages/draft/attachments?$select=name,size,isInline") { fileReads++; result = { value: [] }; }
       else throw new Error("Unexpected request: " + method + " " + endpoint);
       return { ok: true, status: 200, json: async () => result };
     } };
@@ -65,19 +65,28 @@ function load(options) {
   assert.deepEqual(g.opens, ["draft", "draft"], "retry the same populated draft");
   assert.equal(g.inline.length, 1, "logo uploaded once despite stale reads and open retries");
   assert.equal(g.calls.some(c => c.startsWith("DELETE")), false, "stale body cannot delete the logo");
+  // A draft that never verifies still opens (it already exists in Drafts),
+  // with a notice naming what to check, instead of an error and no draft.
   const never = load({ neverReady: true });
-  await never.run();
-  assert.equal(never.opens.length, 0, "do not open a draft with unverified signature images");
+  const neverRun = never.run();
+  await new Promise(setImmediate);
+  assert.equal(never.opens.length, 1, "open the saved draft even when the logo hasn't synced");
+  never.callbacks.shift()({ status: "succeeded" });
+  await neverRun;
   assert.equal(never.inline.length, 1);
   assert.equal(never.calls.some(c => c.startsWith("DELETE")), false);
-  assert.ok(never.notices.some(n => n.includes("still syncing")));
+  assert.ok(never.notices.some(n => n.includes("logo is still syncing")));
   assert.equal(never.completed(), 1);
   const missing = load({ missingFiles: true });
   // Mock the file-copy helper only; readiness checks still execute the real code.
   missing.context.copyFileAttachment = async () => {};
-  await missing.run();
-  assert.equal(missing.opens.length, 0, "never open before copied files are visible");
-  assert.equal(missing.fileReads(), 5);
+  const missingRun = missing.run();
+  await new Promise(setImmediate);
+  assert.equal(missing.fileReads(), 5, "bounded wait for copied files");
+  assert.equal(missing.opens.length, 1, "open anyway once the wait runs out");
+  missing.callbacks.shift()({ status: "succeeded" });
+  await missingRun;
+  assert.ok(missing.notices.some(n => n.includes("reopen it from Drafts")));
   assert.equal(missing.completed(), 1);
   const cachedPage = load({});
   delete cachedPage.context.SignatureLayout;

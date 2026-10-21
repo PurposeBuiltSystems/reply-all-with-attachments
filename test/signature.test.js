@@ -46,8 +46,10 @@ const original = '<html><head><style>body{text-align:right}</style></head><body>
 const result = context.prependSignature(original, sig);
 assert.ok(result.startsWith("<html>"), "signature is not prepended outside the document");
 const parsed = new JSDOM(result).window.document;
-assert.equal(parsed.body.firstElementChild.getAttribute("align"), "left", "isolate signature from quoted-thread alignment");
-assert.equal(parsed.body.firstElementChild.querySelector("p").getAttribute("align"), "left");
+assert.equal(parsed.body.firstElementChild.textContent, "", "an empty line to type on comes before the signature");
+const sigBlock = parsed.body.firstElementChild.nextElementSibling;
+assert.equal(sigBlock.getAttribute("align"), "left", "isolate signature from quoted-thread alignment");
+assert.equal(sigBlock.querySelector("p").getAttribute("align"), "left");
 assert.equal(parsed.querySelector("head style").textContent, "body{text-align:right}");
 assert.equal(parsed.body.lastElementChild.textContent, "Quoted");
 const nested = layout.prepare('<div style="text-align:center"><p>Centered text</p><p><img src="data:image/png;base64,YWJj"></p></div><p>Left text</p>');

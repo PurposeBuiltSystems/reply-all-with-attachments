@@ -210,18 +210,31 @@ async function replyAllWithAttachments(event) {
     notify("info", "Preparing your reply with attachments…");
     var token = await getToken();
     var sig = readSignature(Office.context.roamingSettings);
-    if (sig) { await ensureSignatureLayout(); }
+
+    // Each Graph round trip costs a few hundred ms, and they used to run one
+    // after another. Anything that doesn't depend on the draft starts now.
+    var originalsP = graphAll(token, "/me/messages/" + restId + "/attachments");
+    var layoutP = sig ? ensureSignatureLayout() : Promise.resolve();
+    originalsP.catch(function () {}); // awaited below; don't report it twice
+    layoutP.catch(function () {});
 
     // 1. Create the Reply All draft (Graph omits original attachments, like Outlook).
     var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
+
+    // Its body and the inline images createReplyAll already carried over.
+    var reads = await Promise.all([
+      graph(token, "GET", "/me/messages/" + draft.id + "?$select=body"),
+      graphAll(token, "/me/messages/" + draft.id + "/attachments?$select=name,size"),
+    ]);
+    var body = (reads[0] && reads[0].body && reads[0].body.content) || "";
+    var existing = reads[1];
 
     // 1b. Tidy the quoted-thread header (Graph mashes the divider + From/Sent/
     //     To/Subject onto one line for plain-text originals) and, if the user
     //     saved a signature, insert it above the quoted thread — embedding its
     //     logo as an inline cid attachment so it renders reliably (some clients
     //     strip raw data: URIs in mail).
-    var d = await graph(token, "GET", "/me/messages/" + draft.id + "?$select=body");
-    var body = (d && d.body && d.body.content) || "";
+    await layoutP;
     var tidied = tidyQuotedHeader(body);
     var content = tidied;
     var images = [];
@@ -230,28 +243,12 @@ async function replyAllWithAttachments(event) {
       images = ex.images;
       content = prependSignature(tidied, ex.html);
     }
-    if (sig || tidied !== body) {
-      for (var k = 0; k < images.length; k++) {
-        var im = images[k];
-        await graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
-          "@odata.type": "#microsoft.graph.fileAttachment",
-          name: im.name,
-          contentType: im.contentType,
-          contentBytes: im.contentBytes,
-          isInline: true,
-          contentId: im.cid,
-        });
-      }
-      await graph(token, "PATCH", "/me/messages/" + draft.id, {
-        body: { contentType: "HTML", content: content },
-      });
-    }
 
-    // 2. Fetch the original message's file attachments (skip inline images).
+    // 2. The original message's file attachments (skip inline images).
     //    isInline alone is unreliable — many clients embed signature logos
     //    without setting it — so also treat any attachment whose contentId is
     //    referenced as cid: in the quoted body as inline.
-    var attachments = await graphAll(token, "/me/messages/" + restId + "/attachments");
+    var attachments = await originalsP;
     var files = attachments.filter(function (a) {
       if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") { return false; }
       if (a.isInline) { return false; }
@@ -262,70 +259,65 @@ async function replyAllWithAttachments(event) {
     // 2b. createReplyAll already carries the inline images the quoted thread
     //     needs, and some senders attach the same file twice — skip anything
     //     already on the draft (or already copied) so nothing lands twice.
-    var existing = await graphAll(
-      token,
-      "/me/messages/" + draft.id + "/attachments?$select=name,size"
-    );
     var seen = {};
     existing.forEach(function (a) { seen[a.name + "|" + a.size] = true; });
-
-    // 3. Copy each file; use an upload session for large attachments.
-    var skipped = 0;
-    var copied = {};
-    for (var i = 0; i < files.length; i++) {
-      var f = files[i];
+    var toCopy = files.filter(function (f) {
       var key = f.name + "|" + f.size;
-      if (seen[key]) { continue; }
+      if (seen[key]) { return false; }
       seen[key] = true;
+      return true;
+    });
+
+    // 3. Write the signature and copy the files. They touch different parts of
+    //    the draft, so they run side by side. The logo must exist before the
+    //    body that references it, so that one pair stays in order.
+    var writeSignature = (async function () {
+      if (!sig && tidied === body) { return; }
+      await Promise.all(images.map(function (im) {
+        return graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: im.name,
+          contentType: im.contentType,
+          contentBytes: im.contentBytes,
+          isInline: true,
+          contentId: im.cid,
+        });
+      }));
+      await graph(token, "PATCH", "/me/messages/" + draft.id, {
+        body: { contentType: "HTML", content: content },
+      });
+    })();
+    var copyFiles = mapLimit(toCopy, 3, async function (f) {
       var bytes = f.contentBytes;
       if (!bytes) {
         // Collection didn't include the bytes — fetch the single attachment.
         var full = await graph(token, "GET", "/me/messages/" + restId + "/attachments/" + f.id);
         bytes = full && full.contentBytes;
       }
-      if (!bytes) { skipped++; continue; }
+      if (!bytes) { return null; }
       await copyFileAttachment(token, draft.id, f, bytes);
-      copied[key] = true;
-    }
+      return f.name;
+    });
+    var results = await Promise.all([writeSignature, copyFiles]);
+    var copiedNames = results[1].filter(function (n) { return n !== null; });
+    var skipped = toCopy.length - copiedNames.length;
 
-    // Copying files gives the signature write time to replicate. Verify both
-    // its CID references and attachments; never delete a logo on a stale read.
-    if (images.length) { await waitForSignatureImages(token, draft.id, images); }
+    // 4. Outlook opens its locally synced copy of the draft, which can lag the
+    //    writes above. Wait briefly for the server to show them; if it still
+    //    doesn't, open anyway and say what to check. Refusing to open left
+    //    people waiting on an error for a draft that was already in Drafts.
+    var ready = await waitForDraft(token, draft.id, images, copiedNames);
 
-    // Confirm every copied file before asking Outlook to open the draft.
-    var expected = Object.keys(copied).length;
-    var present = 0;
-    if (expected > 0) {
-      for (var attempt = 0; attempt < 5; attempt++) {
-        var check = await graphAll(
-          token, "/me/messages/" + draft.id + "/attachments?$select=name,size,isInline"
-        );
-        present = check.filter(function (a) {
-          return !a.isInline && copied[a.name + "|" + a.size];
-        }).length;
-        if (present >= expected) { break; }
-        if (attempt < 4) { await delay(400 * (attempt + 1)); }
-      }
-    }
-
-    if (expected > 0 && present < expected) {
-      throw new Error("The draft is saved but its attachments are still syncing. Open it from Drafts once syncing finishes.");
-    }
-
-    // 4. Open the populated draft for the user to review/send. Opening a
-    //    message form isn't available on every client (Outlook mobile) —
-    //    the draft already exists either way, so point at Drafts instead of
-    //    reporting a failure.
     notify("info", "Opening your reply draft…");
+    var notes = [];
+    if (!ready.files) { notes.push("Attachments are still syncing: if any are missing, close the draft and reopen it from Drafts before sending."); }
+    else if (!ready.signature) { notes.push("Your signature logo is still syncing; check it before sending."); }
+    if (skipped > 0) { notes.push(skipped + " attachment(s) couldn't be copied."); }
     try {
       await openDraft(draft.id);
-      notify("info", "Reply draft ready. Review it before sending.");
+      notify("info", notes.length ? notes.join(" ") : "Reply draft ready. Review it before sending.");
     } catch (openErr) {
       notify("info", "Reply draft saved, but Outlook couldn't open it. Open Drafts to review it; you don't need to click Reply All again.");
-    }
-
-    if (skipped > 0) {
-      notify("info", skipped + " attachment(s) could not be copied and were skipped.");
     }
     finish(event);
   } catch (e) {
@@ -334,9 +326,28 @@ async function replyAllWithAttachments(event) {
   }
 }
 
+/** Run fn over items, at most `limit` at a time, keeping result order. */
+async function mapLimit(items, limit, fn) {
+  var out = new Array(items.length);
+  var next = 0;
+  async function worker() {
+    while (next < items.length) {
+      var i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }
+  var workers = [];
+  for (var w = 0; w < Math.min(limit, items.length); w++) { workers.push(worker()); }
+  await Promise.all(workers);
+  return out;
+}
+
 // Insert into the existing document's body, not before its <html>/<head>.
+// An empty line goes ABOVE the signature, as Outlook's own replies do: the
+// draft opens with the cursor at the top, and without it the first thing
+// typed lands inside the signature and takes on its formatting.
 function prependSignature(html, signature) {
-  var prefix = signature + "<br><br>";
+  var prefix = "<div><br></div>" + signature + "<br><br>";
   if (/<body\b[^>]*>/i.test(html)) {
     return html.replace(/<body\b[^>]*>/i, function (bodyTag) { return bodyTag + prefix; });
   }
@@ -351,20 +362,38 @@ function referencesImage(html, cid) {
   });
 }
 
-async function waitForSignatureImages(token, draftId, images) {
-  for (var attempt = 0; attempt < 5; attempt++) {
-    var message = await graph(token, "GET", "/me/messages/" + draftId + "?$select=body");
-    var html = (message && message.body && message.body.content) || "";
-    var attachments = await graphAll(token, "/me/messages/" + draftId + "/attachments?$select=isInline,contentId");
-    var ready = images.every(function (im) {
-      return referencesImage(html, im.cid) && attachments.some(function (a) {
-        return a.isInline && a.contentId === im.cid;
+/**
+ * Poll until the server shows the signature logo (referenced and attached)
+ * and every copied file. Copies are matched by NAME: Exchange's attachment
+ * size counts stored properties too, so a copy needn't report the original's
+ * size, and matching on it can wait out every retry for a file already there.
+ */
+async function waitForDraft(token, draftId, images, copiedNames) {
+  var state = { signature: !images.length, files: !copiedNames.length };
+  var wanted = {};
+  copiedNames.forEach(function (n) { wanted[n] = (wanted[n] || 0) + 1; });
+  for (var attempt = 0; attempt < 5 && !(state.signature && state.files); attempt++) {
+    if (attempt > 0) { await delay(300 * attempt); }
+    var reads = await Promise.all([
+      state.signature ? null : graph(token, "GET", "/me/messages/" + draftId + "?$select=body"),
+      graphAll(token, "/me/messages/" + draftId + "/attachments?$select=name,isInline,contentId"),
+    ]);
+    var html = (reads[0] && reads[0].body && reads[0].body.content) || "";
+    var atts = reads[1];
+    if (!state.signature) {
+      state.signature = images.every(function (im) {
+        return referencesImage(html, im.cid) && atts.some(function (a) {
+          return a.isInline && a.contentId === im.cid;
+        });
       });
-    });
-    if (ready) { return; }
-    if (attempt < 4) { await delay(400 * (attempt + 1)); }
+    }
+    if (!state.files) {
+      var have = {};
+      atts.forEach(function (a) { if (!a.isInline) { have[a.name] = (have[a.name] || 0) + 1; } });
+      state.files = Object.keys(wanted).every(function (n) { return (have[n] || 0) >= wanted[n]; });
+    }
   }
-  throw new Error("The signature image is still syncing. Your draft is saved in Drafts; no image was removed.");
+  return state;
 }
 
 // Keep the command runtime alive until Outlook confirms the open request.
