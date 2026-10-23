@@ -98,14 +98,19 @@ needed for client-specific rendering and sync behavior.
 - Outlook mobile does not support the native message-open APIs. The reply is
   still saved to Drafts for review.
 
-## Publishing (later)
+## Updating the published add-in
 
-1. Host the contents of this folder on a real HTTPS site (not localhost).
-2. Replace every `https://localhost:3000` URL in `manifest.xml` with that host.
-3. Replace the placeholder icons in `assets/` with real artwork.
-4. Generate a fresh `<Id>` GUID for production.
-5. Validate: `npm run validate`. Then deploy via the Microsoft 365 admin center
-   (Integrated Apps) or submit to AppSource.
+The production manifest points to the existing GitHub Pages deployment.
+Preserve its `<Id>` when updating this product; a new ID creates a separate
+add-in. Validate with `npm run validate`, compare the local manifest version
+with the package in Partner Center, and increment the version for a package
+update. Upload package changes to the existing offer.
+
+Before release, exercise a saved reply with small and large attachments,
+signature images, a delayed draft sync, and a failed native-open attempt in
+the actual Outlook clients being claimed. Reopening the same saved draft must
+not create another draft or copy attachments again. Mobile saves the result
+to Drafts; it does not support the desktop message-open API.
 
 ## Project layout
 
