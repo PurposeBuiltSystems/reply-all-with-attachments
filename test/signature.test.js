@@ -59,13 +59,37 @@ assert.equal(nestedDoc.querySelectorAll("p")[1].style.textAlign, "left", "ordina
 const oldSignature = '<p><a href="https://example.com"><img align="right" style="float:right;position:absolute;left:20px" width="150" src="data:image/png;base64,YWJj"></a>Name</p><p>Title</p>';
 box.innerHTML = layout.prepare(oldSignature);
 const footer = box.querySelector("[data-raa-image-footer]");
-assert.equal(footer.previousElementSibling.textContent, "Title");
+assert.equal(footer.closest("tr").previousElementSibling.textContent, "NameTitle");
 assert.equal(footer.querySelector("a").getAttribute("href"), "https://example.com");
 assert.equal(footer.querySelector("img").style.cssFloat, "none");
 assert.equal(footer.querySelector("img").style.position, "static");
 assert.equal(footer.querySelector("img").style.left, "");
 box.innerHTML = layout.prepare(box.innerHTML);
 assert.equal(box.querySelectorAll("[data-raa-image-footer]").length, 1, "repeated normalization keeps one footer");
+assert.equal(box.querySelectorAll("img").length, 1);
+// A floated text table and positioned logo link used to escape the footer's
+// CSS clear rule. Check the actual row boundary used by Outlook's renderer.
+box.innerHTML = layout.prepare('<table align="left" style="float:left;mso-table-lspace:12pt"><tr><td>Name<br>Title</td></tr></table><a href="https://example.com" style="position:absolute;left:200px;mso-position-horizontal:right"><img width="150" src="data:image/png;base64,YWJj"></a>');
+const frame = box.querySelector("table[data-raa-layout]");
+assert.equal(frame.rows.length, 2);
+assert.equal(frame.rows[0].cells.length, 1);
+assert.equal(frame.rows[1].cells.length, 1);
+assert.equal(frame.rows[0].querySelector("img"), null);
+assert.equal(frame.rows[1].querySelectorAll("img").length, 1);
+assert.equal(frame.rows[0].textContent, "NameTitle");
+const textTable = frame.rows[0].querySelector("table");
+assert.equal(textTable.hasAttribute("align"), false);
+assert.equal(textTable.style.cssFloat, "none");
+assert.equal(/mso-table-lspace/.test(textTable.getAttribute("style")), false);
+const logoLink = frame.rows[1].querySelector("a");
+assert.equal(logoLink.style.position, "static");
+assert.equal(logoLink.style.left, "");
+assert.equal(/mso-position/.test(logoLink.getAttribute("style")), false);
+assert.equal(logoLink.href, "https://example.com/");
+assert.equal(logoLink.querySelector("img").getAttribute("width"), "150");
+box.innerHTML = layout.prepare(box.innerHTML);
+assert.equal(box.querySelectorAll("table[data-raa-layout]").length, 1);
+assert.equal(box.textContent, "NameTitle");
 assert.equal(box.querySelectorAll("img").length, 1);
 context.sigEl = document.createElement("div");
 context.sigEl.innerHTML = '<p>Name</p><p>Title</p>';

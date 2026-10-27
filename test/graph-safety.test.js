@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const graphPath = path.join(__dirname, "../src/graph.js");
 const source = fs.readFileSync(fs.existsSync(graphPath) ? graphPath :
   path.join(__dirname, "../src/commands/commands.js"), "utf8");
-const names = ["fetchRetry", "graphJson", "graphAll", "listItems", "listReplies", "copyFileAttachment"]
+const names = ["fetchRetry", "graphJson", "graphAll", "listItems", "listReplies", "copyFileAttachment", "readNewDraft"]
   .filter(name => new RegExp("async function " + name + "\\(").test(source));
 const exportsCode = "self.transport = {" + names.join(",") + "};\n";
 const instrumented = source.includes("  root.GraphData = {") ?
@@ -26,10 +26,10 @@ function load(fetcher) {
     Office: { onReady() {}, actions: { associate() {} },
       context: { roamingSettings: { get() { return false; } } } },
     fetch: async (url, opts) => { calls.push({ url, opts }); return fetcher(url, opts, calls.length); },
-    setTimeout: (fn, ms) => { waits.push(ms); fn(); return 1; }, clearTimeout() {} };
+    setTimeout: (fn, ms) => { if (ms < 30000) { waits.push(ms); fn(); } return 1; }, clearTimeout() {} };
   context.window = context.self;
   vm.runInNewContext(instrumented, context);
-  return { api: context.self.GraphData, transport: context.self.transport, calls, waits };
+  return { context, api: context.self.GraphData, transport: context.self.transport, calls, waits };
 }
 (async () => {
   // Exercise retry behavior with fake timers, including date/invalid headers.
@@ -73,8 +73,21 @@ function load(fetcher) {
     const g = load(() => response(200, { value: [], "@odata.nextLink": "https://graph.microsoft.com/v1.0/next" }));
     await assert.rejects(g.transport[name]("token", "site", "list", "message"), /scan limit/);
   }
+  if (names.includes("readNewDraft")) {
+    const transient = load((url, opts, n) => response(n < 3 ? 404 : 200, { id: "draft" }));
+    assert.equal((await transient.transport.readNewDraft("token", "/me/messages/draft")).id, "draft");
+    assert.equal(transient.calls.length, 3);
+    assert.ok(transient.calls.every(c => c.opts.method === "GET"), "new-draft recovery only replays reads");
+    const gone = load(() => response(404));
+    await assert.rejects(gone.transport.readNewDraft("token", "/me/messages/draft"), err => err.status === 404);
+    assert.equal(gone.calls.length, 3, "new-draft 404 retry is bounded");
+    const denied = load(() => response(403));
+    await assert.rejects(denied.transport.readNewDraft("token", "/me/messages/draft"), err => err.status === 403);
+    assert.equal(denied.calls.length, 1, "permission errors are not treated as draft sync delays");
+  }
   if (names.includes("copyFileAttachment")) {
     const small = load(() => response(201, { id: "attachment" }));
+    small.context.atob = () => { throw new Error("small files must not be decoded"); };
     await small.transport.copyFileAttachment("token", "draft", { name: "small.txt" }, "YWJj");
     assert.equal(small.calls.length, 1);
     assert.equal(JSON.parse(small.calls[0].opts.body).contentBytes, "YWJj");

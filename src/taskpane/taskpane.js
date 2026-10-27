@@ -143,7 +143,7 @@ async function ensureSignatureLayout() {
   await new Promise(function (resolve, reject) {
     var timer = setTimeout(function () { reject(new Error("Signature layout didn't load. Check your connection and try again.")); }, 20000);
     var script = document.createElement("script");
-    script.src = new URL("../signature-layout.js?v=1", document.baseURI).href;
+    script.src = new URL("../signature-layout.js?v=2", document.baseURI).href;
     script.onload = function () {
       clearTimeout(timer);
       if (typeof SignatureLayout !== "undefined") { resolve(); }

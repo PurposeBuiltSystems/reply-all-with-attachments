@@ -9,6 +9,7 @@ function load(options) {
   const storedSig = '<p align="center"><img width="100" src="data:image/png;base64,YWJj"></p>';
   const calls = [], opens = [], callbacks = [], notices = [], created = [], inline = [];
   let completed = 0, bodyReads = 0, body = "", fileReads = 0;
+  let notFoundLeft = options.draftNotFound || 0;
   const context = {
     document: new JSDOM("", { url: "https://purposebuiltsystems.github.io/reply-all-with-attachments/src/commands/commands.html" }).window.document,
     setTimeout(fn, ms) { if (ms < 10000) { fn(); } return 1; }, clearTimeout() {},
@@ -16,14 +17,21 @@ function load(options) {
     Office: { onReady() {}, actions: { associate() {} }, AsyncResultStatus: { Succeeded: "succeeded", Failed: "failed" },
       MailboxEnums: { RestVersion: { v2_0: "v2" }, ItemNotificationMessageType: { ErrorMessage: "error", InformationalMessage: "info" } },
       context: { roamingSettings: { get(key) { return key === "raa.sig.meta" ? 1 : key === "raa.sig.0" ? storedSig : null; } },
-        mailbox: { item: { itemId: "source", notificationMessages: { replaceAsync(key, notice) { notices.push(notice.message); } } },
+        mailbox: { item: { itemId: "source", attachments: options.emptyAttachments ? [] : undefined, notificationMessages: { replaceAsync(key, notice) { notices.push(notice.message); } } },
           convertToRestId: id => id, convertToEwsId: id => id,
           displayMessageFormAsync(id, callback) { opens.push(id); callbacks.push(callback); } } } },
     fetch: async (url, opts) => {
       const endpoint = url.replace("https://graph.microsoft.com/v1.0", "");
       const method = opts.method; calls.push(method + " " + endpoint);
+      if (method === "GET" && endpoint.startsWith("/me/messages/draft") && notFoundLeft > 0) {
+        notFoundLeft--;
+        return { ok: false, status: 404, text: async () => "Draft not visible yet" };
+      }
+      if (options.verificationError && endpoint.endsWith("/attachments?$select=name,isInline,contentId")) {
+        return { ok: false, status: 400, text: async () => "Read unavailable" };
+      }
       let result;
-      if (endpoint.endsWith("/createReplyAll")) { created.push("draft"); result = { id: "draft" }; }
+      if (endpoint.endsWith("/createReplyAll")) { created.push("draft"); result = { id: "draft" }; if (options.returnBody) { result.body = { content: "<html><body>Quoted</body></html>" }; } }
       else if (endpoint === "/me/messages/draft?$select=body") {
         bodyReads++; result = { body: { content: bodyReads < 3 || options.neverReady ? "<html><body>Quoted</body></html>" : body } };
       } else if (endpoint === "/me/messages/draft" && method === "PATCH") {
@@ -49,6 +57,42 @@ function load(options) {
     run: () => context.replyAllWithAttachments({ completed() { completed++; } }) };
 }
 (async () => {
+  const fresh = load({ draftNotFound: 2 });
+  const freshRun = fresh.run();
+  await new Promise(setImmediate);
+  assert.equal(fresh.opens.length, 1, "transient new-draft 404 reads recover within the first click");
+  fresh.callbacks.shift()({ status: "succeeded" });
+  await freshRun;
+  assert.equal(fresh.created.length, 1);
+  assert.equal(fresh.inline.length, 1, "read retries do not replay signature uploads");
+  assert.equal(fresh.completed(), 1);
+  const interrupted = load({ verificationError: true });
+  const interruptedRun = interrupted.run();
+  await new Promise(setImmediate);
+  assert.equal(interrupted.opens.length, 1, "verification failure still opens the fully written draft");
+  interrupted.callbacks.shift()({ status: "succeeded" });
+  await interruptedRun;
+  assert.equal(interrupted.created.length, 1);
+  assert.equal(interrupted.inline.length, 1);
+  assert.ok(interrupted.notices.some(n => n.includes("verification was interrupted")));
+  assert.equal(interrupted.completed(), 1);
+  const fast = load({ returnBody: true, emptyAttachments: true });
+  const fastRun = fast.run();
+  await new Promise(setImmediate);
+  assert.equal(fast.opens.length, 1);
+  const patchIndex = fast.calls.indexOf("PATCH /me/messages/draft");
+  assert.ok(patchIndex > 0);
+  assert.equal(fast.calls.slice(0, patchIndex).some(c => c.includes("?$select=body")), false,
+    "reuse createReplyAll body instead of a pre-write GET");
+  assert.equal(fast.calls.some(c => c === "GET /me/messages/source/attachments"), false,
+    "explicitly empty Office attachments skip the source scan");
+  assert.equal(fast.calls.some(c => c.endsWith("/attachments?$select=name,size")), false,
+    "no source attachments means no duplicate scan");
+  assert.ok(fast.calls.some(c => c.endsWith("/attachments?$select=name,isInline,contentId")),
+    "signature verification still runs on the faster path");
+  fast.callbacks.shift()({ status: "succeeded" });
+  await fastRun;
+  assert.equal(fast.completed(), 1);
   const g = load({});
   const running = g.run();
   await new Promise(setImmediate);
@@ -91,7 +135,7 @@ function load(options) {
   const cachedPage = load({});
   delete cachedPage.context.SignatureLayout;
   cachedPage.context.document.head.appendChild = script => {
-    assert.ok(script.src.endsWith("/src/signature-layout.js?v=1"));
+    assert.ok(script.src.endsWith("/src/signature-layout.js?v=2"));
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../src/signature-layout.js"), "utf8"), cachedPage.context);
     script.onload();
   };
@@ -113,7 +157,7 @@ function load(options) {
   assert.ok(failedOpen.notices.some(n => n.includes("Open Drafts")));
   const timeout = load({});
   let expire;
-  timeout.context.setTimeout = (fn, ms) => { if (ms === 10000) { expire = fn; } else { fn(); } return 1; };
+  timeout.context.setTimeout = (fn, ms) => { if (ms === 10000) { expire = fn; } else if (ms < 10000) { fn(); } return 1; };
   const timedRun = timeout.run();
   await new Promise(setImmediate);
   assert.equal(timeout.completed(), 0);

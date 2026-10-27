@@ -12,7 +12,7 @@
     "stop": "office-addin-debugging stop manifest.xml",
     "validate": "office-addin-manifest validate manifest.xml",
     "check": "node tools/check-undeclared.js && node tools/check-pages.js",
-    "test": "node tools/check-undeclared.js && node tools/check-pages.js && node test/graph-safety.test.js && node test/server-safety.test.js && node test/commands.test.js && node test/signature.test.js && node test/draft-ready.test.js"
+    "test": "node tools/check-undeclared.js && node tools/check-pages.js && node test/graph-safety.test.js && node test/server-safety.test.js && node test/commands.test.js && node test/startup.test.js && node test/timeouts.test.js && node test/signature.test.js && node test/draft-ready.test.js"
   },
   "author": "Matthew Miller",
   "license": "MIT",

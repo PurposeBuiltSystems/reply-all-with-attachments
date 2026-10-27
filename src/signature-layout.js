@@ -107,6 +107,28 @@
   function prepare(html) {
     var box = document.createElement("div");
     box.innerHTML = html;
+    // Unwrap our previous output before rebuilding it (saved HTML may already
+    // have passed through prepare). Keep the text and images exactly once.
+    Array.from(box.querySelectorAll("table[data-raa-layout]")).forEach(function (table) {
+      var fragment = document.createDocumentFragment();
+      Array.from(table.rows).forEach(function (row) {
+        Array.from(row.cells).forEach(function (cell) {
+          while (cell.firstChild) { fragment.appendChild(cell.firstChild); }
+        });
+      });
+      table.replaceWith(fragment);
+    });
+    // Pasted Outlook signatures can float the text's table, or position a
+    // linked logo through Word's mso-* properties. Clearing just the image
+    // leaves those wrappers free to place text beside the footer.
+    Array.from(box.querySelectorAll("*")).forEach(function (node) {
+      node.style.cssFloat = "none";
+      node.style.position = "static";
+      ["left", "right", "top", "bottom"].forEach(function (key) { node.style.removeProperty(key); });
+      var style = node.getAttribute("style") || "";
+      node.setAttribute("style", style.replace(/(?:^|;)\s*mso-(?:table-(?:lspace|rspace|overlap)|position-[\w-]+|wrap-[\w-]+)\s*:[^;]*/gi, ""));
+      if (node.tagName === "TABLE") { node.removeAttribute("align"); }
+    });
     stabilize(box, 320);
     imagesBelowText(box);
     // Persist inherited alignment too: a quoted document's broad p/div rules
@@ -122,6 +144,30 @@
       align = align || "left";
       blocks[i].style.textAlign = align;
       blocks[i].setAttribute("align", align);
+    }
+    var footer = box.querySelector("[data-raa-image-footer]");
+    if (footer) {
+      footer.remove();
+      // Separate table rows keep the logo below the text in Outlook's Word
+      // renderer too, where CSS clear/display alone is insufficient.
+      var table = document.createElement("table");
+      table.setAttribute("data-raa-layout", "true");
+      table.setAttribute("role", "presentation");
+      table.setAttribute("border", "0");
+      table.setAttribute("cellpadding", "0");
+      table.setAttribute("cellspacing", "0");
+      table.setAttribute("width", "100%");
+      table.style.cssText = "width:100%;border-collapse:collapse;float:none;position:static";
+      var textCell = table.insertRow().insertCell();
+      var imageCell = table.insertRow().insertCell();
+      [textCell, imageCell].forEach(function (cell) {
+        cell.setAttribute("align", "left");
+        cell.setAttribute("valign", "top");
+        cell.style.cssText = "text-align:left;padding:0;border:0";
+      });
+      while (box.firstChild) { textCell.appendChild(box.firstChild); }
+      imageCell.appendChild(footer);
+      box.appendChild(table);
     }
     // An explicit container keeps quoted-thread CSS/alignment from repositioning
     // the signature. Its descendants retain their own chosen alignment.

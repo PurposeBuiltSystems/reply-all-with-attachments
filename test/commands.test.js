@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const original = { "@odata.type": "#microsoft.graph.fileAttachment", name: "report.txt", size: 3, contentBytes: "YWJj" };
 const copied = [], notices = [], opened = [];
 let completed = 0, checks = 0;
-const context = { setTimeout: fn => { fn(); return 1; }, clearTimeout() {},
+const context = { setTimeout: (fn, ms) => { if (ms < 10000) { fn(); } return 1; }, clearTimeout() {},
   atob: text => Buffer.from(text, "base64").toString("binary"),
   Office: { onReady() {}, actions: { associate() {} },
     MailboxEnums: { RestVersion: { v2_0: "v2" }, ItemNotificationMessageType: { ErrorMessage: "error", InformationalMessage: "info" } },
@@ -41,6 +41,6 @@ context.getToken = async () => "token";
   assert.equal(copied[0].contentBytes, "YWJj");
   assert.deepEqual(opened, ["draft"]);
   assert.equal(checks, 1, "verification counts distinct copied files");
-  assert.equal(notices.some(n => /sync|missing|failed/i.test(n)), false, "duplicates do not trigger a false missing-attachments warning");
+  assert.equal(notices.some(n => /still syncing|missing|failed/i.test(n)), false, "duplicates do not trigger a false missing-attachments warning");
   console.log("All Reply All command integration tests passed.");
 })().catch(err => { console.error(err); process.exitCode = 1; });

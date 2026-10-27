@@ -21,11 +21,18 @@ var GRAPH = "https://graph.microsoft.com/v1.0";
 var SCOPES = ["Mail.ReadWrite"];
 
 var pcaPromise = null;
+var commandAssociated = false;
 
-Office.onReady(function () {});
-if (Office.actions && Office.actions.associate) {
-  Office.actions.associate("replyAllWithAttachments", replyAllWithAttachments);
+function associateCommand() {
+  if (!commandAssociated && Office.actions && Office.actions.associate) {
+    Office.actions.associate("replyAllWithAttachments", replyAllWithAttachments);
+    commandAssociated = true;
+  }
 }
+// Some cold runtimes expose actions only after Office finishes initializing.
+// Register immediately when possible and try again when the host is ready.
+associateCommand();
+Office.onReady(associateCommand);
 
 // Older cached HTML may not include the new layout script yet. Load it on
 // demand so a fresh command script still works on the very first click.
@@ -34,7 +41,7 @@ async function ensureSignatureLayout() {
   await new Promise(function (resolve, reject) {
     var timer = setTimeout(function () { reject(new Error("Signature layout didn't load. Check your connection and try again.")); }, 20000);
     var script = document.createElement("script");
-    script.src = new URL("../signature-layout.js?v=1", document.baseURI).href;
+    script.src = new URL("../signature-layout.js?v=2", document.baseURI).href;
     script.onload = function () {
       clearTimeout(timer);
       if (typeof SignatureLayout !== "undefined") { resolve(); }
@@ -53,6 +60,10 @@ function getPca() {
         clientId: CLIENT_ID,
         authority: "https://login.microsoftonline.com/common",
       },
+    }).catch(function (err) {
+      // A rejected broker initialization must not poison later attempts.
+      pcaPromise = null;
+      throw err;
     });
   }
   return pcaPromise;
@@ -76,8 +87,19 @@ function withTimeout(promise, ms, message) {
 
 /** Get a Graph token: silent first, interactive only if needed. */
 async function getToken() {
-  var pca = await withTimeout(getPca(), 20000,
-    "Sign-in didn't start. Fully quit Outlook (Cmd+Q) and reopen, then try again.");
+  var pca;
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try {
+      pca = await withTimeout(getPca(), 20000,
+        "Sign-in didn't start. Fully quit Outlook (Cmd+Q) and reopen, then try again.");
+      break;
+    } catch (initError) {
+      // Retry a definite initialization failure once, within the first click.
+      // A timeout can still be running, so do not start a second broker then.
+      if (attempt > 0 || pcaPromise) { throw initError; }
+      await delay(250);
+    }
+  }
   try {
     // The pane's Sign out sets this. Honour it here, or that button is
     // decorative: the command would keep working on a silent token.
@@ -103,17 +125,25 @@ async function getToken() {
 function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
 
-/**
- * Microsoft Graph throttles, and this add-in makes bursts of calls - a
- * records bundle or a bulk post is dozens to hundreds. An unretried 429
- * aborts the whole run part-way, which is the worst possible failure for
- * work that is half-written. One respectful retry honouring Retry-After
- * absorbs the overwhelming majority of throttling without hammering the
- * service; anything past that is a real outage and should surface.
- */
+// Bound both the request and its response body. A stalled connection must
+// release Outlook's command runtime and show a recoverable error.
+async function fetchBounded(url, opts) {
+  var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  var options = Object.assign({}, opts);
+  if (controller) { options.signal = controller.signal; }
+  try {
+    return await withTimeout(fetch(url, options), 30000, "Microsoft request timed out. Check your connection.");
+  } catch (err) {
+    if (controller) { controller.abort(); }
+    throw err;
+  }
+}
+
+// Retry throttles once, respecting Retry-After. A 503 on a write may have
+// committed already, so only replay reads for that ambiguous failure.
 async function fetchRetry(url, opts) {
-  var res = await fetch(url, opts);
-  if (res.status === 429 || res.status === 503) {
+  var res = await fetchBounded(url, opts);
+  if (res.status === 429 || (res.status === 503 && (!opts || !opts.method || opts.method === "GET"))) {
     var retryAfter = res.headers.get("Retry-After");
     var wait = retryAfter && /^\d+(\.\d+)?$/.test(retryAfter.trim())
       ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();
@@ -122,7 +152,7 @@ async function fetchRetry(url, opts) {
     // Surface long throttles rather than retrying before the server allows it.
     if (wait > 15000) { return res; }
     await new Promise(function (r) { setTimeout(r, wait); });
-    res = await fetch(url, opts);
+    res = await fetchBounded(url, opts);
   }
   return res;
 }
@@ -138,19 +168,33 @@ async function graph(token, method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    var text = await res.text();
-    throw new Error("Graph " + method + " " + path + " → " + res.status + " " + text);
+    var text = await withTimeout(res.text(), 30000, "Microsoft error response timed out.");
+    var error = new Error("Graph " + method + " " + path + " → " + res.status + " " + text);
+    error.status = res.status;
+    throw error;
   }
-  return res.status === 204 ? null : res.json();
+  return res.status === 204 ? null : withTimeout(res.json(), 30000, "Microsoft response timed out. Check your connection.");
+}
+
+// A new draft can briefly return 404 immediately after createReplyAll. Retry
+// its reads only; never replay draft creation or attachment writes.
+async function readNewDraft(token, path) {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    try { return await graph(token, "GET", path); }
+    catch (err) {
+      if (err.status !== 404 || attempt === 2) { throw err; }
+      await delay(250 * (attempt + 1));
+    }
+  }
 }
 
 /** Read every page, including attachment collections with server-side paging. */
-async function graphAll(token, path) {
+async function graphAll(token, path, newDraft) {
   var out = [];
   var next = path;
   var pages = 0;
   while (next && pages++ < 100) {
-    var page = await graph(token, "GET", next);
+    var page = newDraft ? await readNewDraft(token, next) : await graph(token, "GET", next);
     out = out.concat(page.value || []);
     next = page["@odata.nextLink"] || null;
     if (next && next.indexOf(GRAPH + "/") !== 0) {
@@ -164,8 +208,11 @@ async function graphAll(token, path) {
 /** Graph requires an upload session for files at or above 3 MB. */
 async function copyFileAttachment(token, draftId, file, base64) {
   var path = "/me/messages/" + draftId + "/attachments";
-  var binary = atob(base64);
-  if (binary.length < 3000000) {
+  // Small uploads already need base64. Avoid decoding a second full copy just
+  // to measure it, especially when copying several files at once.
+  var padding = /==$/.test(base64) ? 2 : /=$/.test(base64) ? 1 : 0;
+  var byteLength = base64.length * 3 / 4 - padding;
+  if (byteLength < 3000000) {
     return graph(token, "POST", path, {
       "@odata.type": "#microsoft.graph.fileAttachment",
       name: file.name,
@@ -173,6 +220,7 @@ async function copyFileAttachment(token, draftId, file, base64) {
       contentBytes: base64,
     });
   }
+  var binary = atob(base64);
   var session = await graph(token, "POST", path + "/createUploadSession", {
     AttachmentItem: { attachmentType: "file", name: file.name, size: binary.length, contentType: file.contentType },
   });
@@ -199,6 +247,7 @@ async function copyFileAttachment(token, draftId, file, base64) {
 
 /** @param {Office.AddinCommands.Event} event */
 async function replyAllWithAttachments(event) {
+  var creationStarted = false;
   try {
     var item = Office.context.mailbox.item;
     // Office gives an EWS id; Graph needs a REST id.
@@ -207,24 +256,39 @@ async function replyAllWithAttachments(event) {
       Office.MailboxEnums.RestVersion.v2_0
     );
 
-    notify("info", "Preparing your reply with attachments…");
-    var token = await getToken();
+    notify("info", "Signing in to Outlook…");
     var sig = readSignature(Office.context.roamingSettings);
+    // Load/format the saved signature while Outlook's authentication broker
+    // is working, rather than adding that work after sign-in.
+    var layoutP = sig ? ensureSignatureLayout().then(function () {
+      return extractInlineImages(SignatureLayout.prepare(sig));
+    }) : Promise.resolve({ html: "", images: [] });
+    layoutP.catch(function () {});
+    var token = await getToken();
 
     // Each Graph round trip costs a few hundred ms, and they used to run one
     // after another. Anything that doesn't depend on the draft starts now.
-    var originalsP = graphAll(token, "/me/messages/" + restId + "/attachments");
-    var layoutP = sig ? ensureSignatureLayout() : Promise.resolve();
+    // An explicitly empty Office collection needs no Graph attachment scan.
+    // Missing metadata keeps the original Graph fallback.
+    var noAttachments = Array.isArray(item.attachments) && item.attachments.length === 0;
+    var originalsP = noAttachments ? Promise.resolve([]) : graphAll(token, "/me/messages/" + restId + "/attachments");
     originalsP.catch(function () {}); // awaited below; don't report it twice
-    layoutP.catch(function () {});
 
     // 1. Create the Reply All draft (Graph omits original attachments, like Outlook).
+    notify("info", "Creating your reply draft…");
+    creationStarted = true;
     var draft = await graph(token, "POST", "/me/messages/" + restId + "/createReplyAll", {});
+
+    if (!draft || !draft.id) { throw new Error("Microsoft did not return the draft ID."); }
+    notify("info", "Reading the original attachments…");
 
     // Its body and the inline images createReplyAll already carried over.
     var reads = await Promise.all([
-      graph(token, "GET", "/me/messages/" + draft.id + "?$select=body"),
-      graphAll(token, "/me/messages/" + draft.id + "/attachments?$select=name,size"),
+      // createReplyAll normally returns the body already. Fetch only when a
+      // client/service response omits it, preserving the compatibility path.
+      draft.body && typeof draft.body.content === "string" ? Promise.resolve(draft) :
+        readNewDraft(token, "/me/messages/" + draft.id + "?$select=body"),
+      noAttachments ? Promise.resolve([]) : graphAll(token, "/me/messages/" + draft.id + "/attachments?$select=name,size", true),
     ]);
     var body = (reads[0] && reads[0].body && reads[0].body.content) || "";
     var existing = reads[1];
@@ -234,12 +298,12 @@ async function replyAllWithAttachments(event) {
     //     saved a signature, insert it above the quoted thread — embedding its
     //     logo as an inline cid attachment so it renders reliably (some clients
     //     strip raw data: URIs in mail).
-    await layoutP;
+    var preparedSignature = await layoutP;
     var tidied = tidyQuotedHeader(body);
     var content = tidied;
     var images = [];
     if (sig) {
-      var ex = extractInlineImages(SignatureLayout.prepare(sig));
+      var ex = preparedSignature;
       images = ex.images;
       content = prependSignature(tidied, ex.html);
     }
@@ -271,6 +335,7 @@ async function replyAllWithAttachments(event) {
     // 3. Write the signature and copy the files. They touch different parts of
     //    the draft, so they run side by side. The logo must exist before the
     //    body that references it, so that one pair stays in order.
+    notify("info", "Copying " + toCopy.length + " attachment(s) and saving your signature…");
     var writeSignature = (async function () {
       if (!sig && tidied === body) { return; }
       await Promise.all(images.map(function (im) {
@@ -306,11 +371,20 @@ async function replyAllWithAttachments(event) {
     //    writes above. Wait briefly for the server to show them; if it still
     //    doesn't, open anyway and say what to check. Refusing to open left
     //    people waiting on an error for a draft that was already in Drafts.
-    var ready = await waitForDraft(token, draft.id, images, copiedNames);
+    notify("info", "Checking that your reply has synced…");
+    var ready;
+    var verificationFailed = false;
+    try { ready = await waitForDraft(token, draft.id, images, copiedNames); }
+    catch (verifyError) {
+      // All writes succeeded. A failed verification read should not prevent
+      // opening the saved draft and make the user create another on click two.
+      verificationFailed = true;
+    }
 
     notify("info", "Opening your reply draft…");
     var notes = [];
-    if (!ready.files) { notes.push("Attachments are still syncing: if any are missing, close the draft and reopen it from Drafts before sending."); }
+    if (verificationFailed) { notes.push("Draft saved; verification was interrupted. Check attachments and signature before sending."); }
+    else if (!ready.files) { notes.push("Attachments are still syncing: if any are missing, close the draft and reopen it from Drafts before sending."); }
     else if (!ready.signature) { notes.push("Your signature logo is still syncing; check it before sending."); }
     if (skipped > 0) { notes.push(skipped + " attachment(s) couldn't be copied."); }
     try {
@@ -321,7 +395,7 @@ async function replyAllWithAttachments(event) {
     }
     finish(event);
   } catch (e) {
-    notify("error", "Reply All with Attachments failed: " + (e && e.message ? e.message : e));
+    notify("error", (creationStarted ? "Reply interrupted. Check Drafts before trying again. " : "Reply could not start. ") + (e && e.message ? e.message : e));
     finish(event);
   }
 }
@@ -375,8 +449,8 @@ async function waitForDraft(token, draftId, images, copiedNames) {
   for (var attempt = 0; attempt < 5 && !(state.signature && state.files); attempt++) {
     if (attempt > 0) { await delay(300 * attempt); }
     var reads = await Promise.all([
-      state.signature ? null : graph(token, "GET", "/me/messages/" + draftId + "?$select=body"),
-      graphAll(token, "/me/messages/" + draftId + "/attachments?$select=name,isInline,contentId"),
+      state.signature ? null : readNewDraft(token, "/me/messages/" + draftId + "?$select=body"),
+      graphAll(token, "/me/messages/" + draftId + "/attachments?$select=name,isInline,contentId", true),
     ]);
     var html = (reads[0] && reads[0].body && reads[0].body.content) || "";
     var atts = reads[1];
