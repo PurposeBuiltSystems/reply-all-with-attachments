@@ -27,7 +27,7 @@ function load(options) {
         notFoundLeft--;
         return { ok: false, status: 404, text: async () => "Draft not visible yet" };
       }
-      if (options.verificationError && endpoint.endsWith("/attachments?$select=name,isInline,contentId")) {
+      if (options.verificationError && endpoint.endsWith("/attachments?$select=id,name,isInline")) {
         return { ok: false, status: 400, text: async () => "Read unavailable" };
       }
       let result;
@@ -38,12 +38,13 @@ function load(options) {
         body = JSON.parse(opts.body).body.content; result = {};
       } else if (endpoint === "/me/messages/draft/attachments" && method === "POST") {
         inline.push(JSON.parse(opts.body)); result = { id: "logo" };
-      } else if (endpoint === "/me/messages/draft/attachments?$select=name,isInline,contentId") {
+      } else if (endpoint === "/me/messages/draft/attachments?$select=id,name,isInline") {
         if (options.missingFiles) { fileReads++; }
-        result = { value: inline };
+        result = { value: inline.map((a,i)=>({id:"inline-"+i,name:a.name,isInline:a.isInline})) };
       } else if (endpoint === "/me/messages/source/attachments") {
         result = { value: options.missingFiles ? [{ "@odata.type": "#microsoft.graph.fileAttachment", name: "report.txt", size: 3, contentBytes: "YWJj" }] : [] };
       } else if (endpoint === "/me/messages/draft/attachments?$select=name,size") result = { value: [] };
+      else if (endpoint.startsWith("/me/messages/draft/attachments/inline-")) { result=inline[Number(endpoint.split("inline-")[1])]; }
       else throw new Error("Unexpected request: " + method + " " + endpoint);
       return { ok: true, status: 200, json: async () => result };
     } };
@@ -64,6 +65,8 @@ function load(options) {
   fresh.callbacks.shift()({ status: "succeeded" });
   await freshRun;
   assert.equal(fresh.created.length, 1);
+  assert.ok(!fresh.calls.some(c=>c.includes("$select=")&&c.includes("contentId")), "base attachment queries never select a fileAttachment-only property");
+  assert.ok(fresh.calls.some(c=>c.includes("/attachments/inline-")), "inline image identity is verified with its typed attachment read");
   assert.equal(fresh.inline.length, 1, "read retries do not replay signature uploads");
   assert.equal(fresh.completed(), 1);
   const interrupted = load({ verificationError: true });
@@ -88,7 +91,7 @@ function load(options) {
     "explicitly empty Office attachments skip the source scan");
   assert.equal(fast.calls.some(c => c.endsWith("/attachments?$select=name,size")), false,
     "no source attachments means no duplicate scan");
-  assert.ok(fast.calls.some(c => c.endsWith("/attachments?$select=name,isInline,contentId")),
+  assert.ok(fast.calls.some(c => c.endsWith("/attachments?$select=id,name,isInline")),
     "signature verification still runs on the faster path");
   fast.callbacks.shift()({ status: "succeeded" });
   await fastRun;

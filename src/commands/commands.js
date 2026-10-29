@@ -450,10 +450,20 @@ async function waitForDraft(token, draftId, images, copiedNames) {
     if (attempt > 0) { await delay(300 * attempt); }
     var reads = await Promise.all([
       state.signature ? null : readNewDraft(token, "/me/messages/" + draftId + "?$select=body"),
-      graphAll(token, "/me/messages/" + draftId + "/attachments?$select=name,isInline,contentId", true),
+      graphAll(token, "/me/messages/" + draftId + "/attachments?$select=id,name,isInline", true),
     ]);
     var html = (reads[0] && reads[0].body && reads[0].body.content) || "";
     var atts = reads[1];
+    // contentId belongs to fileAttachment, not the base attachment collection.
+    // Select base fields, then read only inline images that need CID verification.
+    if (!state.signature) {
+      for (var a = 0; a < atts.length; a++) {
+        if (atts[a].isInline && !atts[a].contentId && atts[a].id) {
+          var full = await readNewDraft(token, "/me/messages/" + draftId + "/attachments/" + encodeURIComponent(atts[a].id));
+          atts[a].contentId = full.contentId;
+        }
+      }
+    }
     if (!state.signature) {
       state.signature = images.every(function (im) {
         return referencesImage(html, im.cid) && atts.some(function (a) {

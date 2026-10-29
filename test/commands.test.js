@@ -26,7 +26,7 @@ const context = { setTimeout: (fn, ms) => { if (ms < 10000) { fn(); } return 1; 
     else if (endpoint === "/me/messages/draft/attachments?$select=name,size") body = { value: [] };
     else if (endpoint === "/me/messages/draft/attachments" && method === "POST") {
       const payload = JSON.parse(opts.body); copied.push(payload); body = { id: "copied" };
-    } else if (endpoint === "/me/messages/draft/attachments?$select=name,isInline,contentId") {
+    } else if (endpoint === "/me/messages/draft/attachments?$select=id,name,isInline") {
       // Exchange reports a different size for the copy; matching is by name.
       checks++; body = { value: [{ name: "report.txt", size: 912, isInline: false }] };
     } else throw new Error("Unexpected request: " + method + " " + endpoint);
