@@ -61,11 +61,18 @@ local CA so the browser/Outlook trusts `https://localhost:3000`.
 1. Signs in and creates one Reply All draft through Microsoft Graph.
 2. Places the saved signature inside the reply's HTML body, placing images beneath the signature text and embedding logos with unique inline content IDs.
 3. Copies the original file attachments, following collection paging and
-   using upload sessions for large files.
+   using upload sessions for large files. Writes to the same draft run in
+   sequence. Distinct source files with identical names and sizes are retained.
+   A failed copy does not stop the remaining files; a persistent warning flags
+   partial results for review before sending.
 4. Waits for the signature images and copied files to be visible on the draft.
 5. Uses Outlook's asynchronous open API where available and waits for its
    callback before completing the command. A definite open failure is retried
    on the same draft. Older clients use the legacy open API.
+   Classic Outlook on Windows gets a bounded 15-second retry-delay window for
+   error 9049 (new draft not visible yet), without creating or copying again.
+   Other Classic errors and unknown callback timeouts stop with a Drafts
+   recovery message instead of repeating an uncertain open request.
 
 The add-in creates drafts only. You review and send them yourself. If Outlook
 cannot open a saved draft, the notification points to Drafts rather than

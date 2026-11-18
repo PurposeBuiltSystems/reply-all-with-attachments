@@ -323,49 +323,67 @@ async function replyAllWithAttachments(event) {
     // 2b. createReplyAll already carries the inline images the quoted thread
     //     needs, and some senders attach the same file twice — skip anything
     //     already on the draft (or already copied) so nothing lands twice.
-    var seen = {};
-    existing.forEach(function (a) { seen[a.name + "|" + a.size] = true; });
+    var seen = Object.create(null);
+    var existingCounts = Object.create(null);
+    existing.forEach(function (a) {
+      var key = a.name + "|" + a.size;
+      existingCounts[key] = (existingCounts[key] || 0) + 1;
+    });
     var toCopy = files.filter(function (f) {
+      // Different files can share both name and size. Only the same source ID
+      // repeated across collection pages is a duplicate.
+      var sourceKey = f.id || f.name + "|" + f.size;
+      if (seen[sourceKey]) { return false; }
+      seen[sourceKey] = true;
       var key = f.name + "|" + f.size;
-      if (seen[key]) { return false; }
-      seen[key] = true;
+      if (existingCounts[key]) { existingCounts[key]--; return false; }
       return true;
     });
 
-    // 3. Write the signature and copy the files. They touch different parts of
-    //    the draft, so they run side by side. The logo must exist before the
-    //    body that references it, so that one pair stays in order.
+    // 3. Serialize writes to this message. Attachments and body changes all
+    // update the same Exchange item; parallel writes can leave a partial draft.
+    // A failed file must not prevent the remaining files or the saved draft
+    // from being presented for review. Never replay an ambiguous failed write.
     notify("info", "Copying " + toCopy.length + " attachment(s) and saving your signature…");
-    var writeSignature = (async function () {
-      if (!sig && tidied === body) { return; }
-      await Promise.all(images.map(function (im) {
-        return graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
-          "@odata.type": "#microsoft.graph.fileAttachment",
-          name: im.name,
-          contentType: im.contentType,
-          contentBytes: im.contentBytes,
-          isInline: true,
-          contentId: im.cid,
+    var signatureError = null;
+    try {
+      if (sig || tidied !== body) {
+        for (var imageIndex = 0; imageIndex < images.length; imageIndex++) {
+          var im = images[imageIndex];
+          await graph(token, "POST", "/me/messages/" + draft.id + "/attachments", {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            name: im.name,
+            contentType: im.contentType,
+            contentBytes: im.contentBytes,
+            isInline: true,
+            contentId: im.cid,
+          });
+        }
+        await graph(token, "PATCH", "/me/messages/" + draft.id, {
+          body: { contentType: "HTML", content: content },
         });
-      }));
-      await graph(token, "PATCH", "/me/messages/" + draft.id, {
-        body: { contentType: "HTML", content: content },
-      });
-    })();
-    var copyFiles = mapLimit(toCopy, 3, async function (f) {
-      var bytes = f.contentBytes;
-      if (!bytes) {
-        // Collection didn't include the bytes — fetch the single attachment.
-        var full = await graph(token, "GET", "/me/messages/" + restId + "/attachments/" + f.id);
-        bytes = full && full.contentBytes;
       }
-      if (!bytes) { return null; }
-      await copyFileAttachment(token, draft.id, f, bytes);
-      return f.name;
-    });
-    var results = await Promise.all([writeSignature, copyFiles]);
-    var copiedNames = results[1].filter(function (n) { return n !== null; });
-    var skipped = toCopy.length - copiedNames.length;
+    } catch (signatureWriteError) { signatureError = signatureWriteError; }
+    var failedNames = [];
+    var copiedNames = [];
+    for (var fileIndex = 0; fileIndex < toCopy.length; fileIndex++) {
+      var f = toCopy[fileIndex];
+      notify("info", "Copying attachment " + (fileIndex + 1) + " of " + toCopy.length + ": " + f.name);
+      try {
+        var bytes = f.contentBytes;
+        if (typeof bytes !== "string") {
+          // Collection didn't include the bytes — fetch the single attachment.
+          var full = await graph(token, "GET", "/me/messages/" + restId + "/attachments/" + f.id);
+          bytes = full && full.contentBytes;
+        }
+        if (typeof bytes !== "string") { throw new Error("Attachment content unavailable."); }
+        await copyFileAttachment(token, draft.id, f, bytes);
+        copiedNames.push(f.name);
+      } catch (copyError) { failedNames.push(f.name); }
+    }
+    var unsupported = attachments.filter(function (a) {
+      return a["@odata.type"] !== "#microsoft.graph.fileAttachment" && !a.isInline;
+    }).length;
 
     // 4. Outlook opens its locally synced copy of the draft, which can lag the
     //    writes above. Wait briefly for the server to show them; if it still
@@ -374,24 +392,28 @@ async function replyAllWithAttachments(event) {
     notify("info", "Checking that your reply has synced…");
     var ready;
     var verificationFailed = false;
-    try { ready = await waitForDraft(token, draft.id, images, copiedNames); }
+    try { ready = await waitForDraft(token, draft.id, signatureError ? [] : images, copiedNames); }
     catch (verifyError) {
-      // All writes succeeded. A failed verification read should not prevent
-      // opening the saved draft and make the user create another on click two.
+      // A failed verification read should not prevent opening the saved draft
+      // and make the user create another on click two.
       verificationFailed = true;
     }
 
     notify("info", "Opening your reply draft…");
     var notes = [];
+    if (failedNames.length || unsupported) {
+      notes.push("CHECK ATTACHMENTS: " + (failedNames.length + unsupported) + " could not be confirmed/copied. Review Drafts before sending.");
+    }
+    if (signatureError) { notes.push("Signature could not be saved. Review it before sending."); }
     if (verificationFailed) { notes.push("Draft saved; verification was interrupted. Check attachments and signature before sending."); }
     else if (!ready.files) { notes.push("Attachments are still syncing: if any are missing, close the draft and reopen it from Drafts before sending."); }
     else if (!ready.signature) { notes.push("Your signature logo is still syncing; check it before sending."); }
-    if (skipped > 0) { notes.push(skipped + " attachment(s) couldn't be copied."); }
     try {
       await openDraft(draft.id);
-      notify("info", notes.length ? notes.join(" ") : "Reply draft ready. Review it before sending.");
+      notify(notes.length ? "warning" : "info", notes.length ? notes.join(" ") : "Reply draft ready. Review it before sending.");
     } catch (openErr) {
-      notify("info", "Reply draft saved, but Outlook couldn't open it. Open Drafts to review it; you don't need to click Reply All again.");
+      notify("warning", "Draft saved. Open Drafts to review it; do not click Reply All again. " +
+        (notes.length ? notes.join(" ") : "Outlook couldn't open the saved reply."));
     }
     finish(event);
   } catch (e) {
@@ -494,15 +516,23 @@ async function openDraft(draftId) {
     await delay(500);
     return;
   }
-  for (var attempt = 0; attempt < 3; attempt++) {
+  var classic = Office.context.platform === "PC" &&
+    mailbox.diagnostics && mailbox.diagnostics.hostName === "Outlook";
+  var maxAttempts = classic ? 5 : 3;
+  for (var attempt = 0; attempt < maxAttempts; attempt++) {
     // A missing callback has an unknown outcome, so a timeout exits without
     // retrying. Only a definite failed callback is retried below.
     var result = await withTimeout(new Promise(function (resolve) {
       mailbox.displayMessageFormAsync(ewsId, resolve);
     }), 10000, "Outlook didn't confirm opening the draft. Check Drafts before trying again.");
     if (result && result.status === Office.AsyncResultStatus.Succeeded) { return; }
-    if (attempt === 2) { throw new Error((result && result.error && result.error.message) || "Outlook couldn't open the draft."); }
-    await delay(600 * (attempt + 1));
+    if (attempt === maxAttempts - 1) { throw new Error((result && result.error && result.error.message) || "Outlook couldn't open the draft."); }
+    // Classic's cached mailbox may lag Graph. Extend only definite item-not-
+    // found failures there; other clients retain their short retry window.
+    if (classic && (!result || !result.error || Number(result.error.code) !== 9049)) {
+      throw new Error((result && result.error && result.error.message) || "Outlook couldn't open the draft.");
+    }
+    await delay(classic ? 1500 * (attempt + 1) : 600 * (attempt + 1));
   }
 }
 
@@ -571,7 +601,7 @@ function notify(kind, text) {
           : Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
       message: String(text).substring(0, 150),
       icon: "Icon.16",
-      persistent: false,
+      persistent: kind === "warning" || kind === "error",
     });
   } catch (e) { /* ignore */ }
 }
